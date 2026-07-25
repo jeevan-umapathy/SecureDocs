@@ -1,10 +1,11 @@
 require("dotenv").config();
 const express = require("express");
 const app = express();
+app.use(express.json());
 
 
 const pool = require("./config/database");
-app.use(express.json());
+
 
 //routes
 
@@ -13,7 +14,6 @@ const userRoutes = require("./routes/userRoutes");
 const authRoutes = require("./routes/authRoutes");
 app.use("/", indexRoutes);
 app.use("/users", userRoutes);
-console.log(authRoutes);
 app.use("/auth", authRoutes);
 
 //connecting database
