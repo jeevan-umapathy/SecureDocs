@@ -12,9 +12,11 @@ const pool = require("./config/database");
 const indexRoutes = require("./routes/indexRoutes");
 const userRoutes = require("./routes/userRoutes");
 const authRoutes = require("./routes/authRoutes");
+const fileRoutes = require("./routes/fileRoutes");
 app.use("/", indexRoutes);
 app.use("/users", userRoutes);
 app.use("/auth", authRoutes);
+app.use("/files", fileRoutes);
 
 //connecting database
 
