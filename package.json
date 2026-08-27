@@ -1,0 +1,30 @@
+{
+  "name": "securedocs",
+  "version": "1.0.0",
+  "description": "Secure Cloud File Sharing Platform with Multi-Factor Authentication",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "backend": "npm run dev --prefix backend",
+    "frontend": "npm run dev --prefix frontend",
+    "dev": "concurrently \"npm run backend\" \"npm run frontend\"",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jeevan-umapathy/SecureDocs.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/jeevan-umapathy/SecureDocs/issues"
+  },
+  "homepage": "https://github.com/jeevan-umapathy/SecureDocs#readme",
+  "devDependencies": {
+    "concurrently": "^10.0.5"
+  }
+}
