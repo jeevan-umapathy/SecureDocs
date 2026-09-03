@@ -15,7 +15,7 @@ function FileCard({ file }) {
         <div>
             <h3>{file.original_name}</h3>
             <p>{file.mime_type}</p>
-            <p>formatFileSize(file.file_size)</p>
+            <p>{formatFileSize(file.file_size)}</p>
         </div>
     );
 }

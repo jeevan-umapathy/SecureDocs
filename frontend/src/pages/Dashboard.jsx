@@ -28,7 +28,7 @@ function Dashboard() {
                 const data = await response.json();
                 if (!response.ok) {
                     setError(data.message);
-                    setLoading(false);
+
                     return;
                 }
                 setFiles(data.files);
