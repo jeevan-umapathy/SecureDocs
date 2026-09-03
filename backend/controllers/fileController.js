@@ -63,7 +63,7 @@ async function renameFile(req, res) {
     const file = await fileModel.getFileById(req.params.id, req.user.id);
 
     if (!file) {
-        return res.status(400).json({
+        return res.status(404).json({
             message: "file not found"
         });
     }
@@ -98,5 +98,6 @@ module.exports = {
     getMyFiles,
     downloadFile,
     renameFile,
-    searchFiles
+    searchFiles,
+    deleteFile
 };

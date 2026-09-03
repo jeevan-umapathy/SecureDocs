@@ -36,5 +36,9 @@ router.patch(
     fileController.renameFile
 );
 
-
+router.delete(
+    "/:id",
+    authMiddleware,
+    fileController.deleteFile
+);
 module.exports = router;
