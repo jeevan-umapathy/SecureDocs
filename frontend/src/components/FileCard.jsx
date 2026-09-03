@@ -10,13 +10,35 @@ function formatFileSize(bytes) {
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function FileCard({ file }) {
+function FileCard({
+    file,
+    onDownload,
+    onDelete,
+    onRename
+}) {
     return (
         <div>
             <h3>{file.original_name}</h3>
             <p>{file.mime_type}</p>
             <p>{formatFileSize(file.file_size)}</p>
+
+
+
+            <button onClick={() => onDownload(file.id, file.original_name)}>
+                Download
+            </button>
+
+            <button onClick={() => onRename(file)}>
+                Rename
+            </button>
+
+            <button onClick={() => onDelete(file.id)}>
+                Delete
+            </button>
+
+
         </div>
+
     );
 }
 
