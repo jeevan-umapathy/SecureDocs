@@ -1,0 +1,28 @@
+.file-card {
+    background: white;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    padding: 18px;
+}
+
+.file-card h3 {
+    margin: 0 0 10px;
+}
+
+.file-card p {
+    margin: 6px 0;
+}
+
+.file-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 14px;
+}
+
+.file-actions button {
+    padding: 7px 12px;
+    border: 1px solid rgb(226, 225, 213);
+    border-radius: 6px;
+    background: white;
+    cursor: pointer;
+}

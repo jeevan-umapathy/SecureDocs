@@ -1,0 +1,132 @@
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    font-family: Arial, Helvetica, sans-serif;
+    background: #f6f7f9;
+}
+
+.dashboard {
+    min-height: 100vh;
+    display: flex;
+}
+
+.sidebar {
+    width: 220px;
+    background: white;
+    border-right: 1px solid #e5e7eb;
+    padding: 24px;
+}
+
+.main-content {
+    flex: 1;
+    padding: 32px;
+}
+
+.topbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.file-controls {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 24px 0;
+    flex-wrap: wrap;
+}
+
+.file-controls input[type="text"] {
+    width: 280px;
+    padding: 10px 12px;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    font-size: 14px;
+}
+
+.file-controls button {
+    padding: 10px 16px;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    background: white;
+    cursor: pointer;
+}
+
+.file-list {
+    display: grid;
+    gap: 12px;
+}
+
+.sidebar h2 {
+    margin-top: 0;
+    margin-bottom: 32px;
+    font-size: 20px;
+}
+
+.sidebar-nav {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.nav-item {
+    text-align: left;
+    padding: 10px 12px;
+    border: none;
+    background: transparent;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 14px;
+}
+
+.nav-item:hover {
+    background: #f3f4f6;
+}
+
+.nav-item.active {
+    background: #eef2ff;
+    font-weight: 600;
+}
+
+.topbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+}
+
+.topbar h1 {
+    margin: 0;
+    font-size: 28px;
+}
+
+.topbar p {
+    margin: 6px 0 0;
+    color: #6b7280;
+}
+
+.topbar button {
+    padding: 9px 14px;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    background: white;
+    cursor: pointer;
+}
+
+.status-message {
+    color: #6b7290;
+    font-size: 16px;
+    margin-top: 24px;
+}
+
+.error-message {
+    color: #b91c1c;
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    padding: 12px;
+    border-radius: 6px;
+    margin: 16px 0;
+}

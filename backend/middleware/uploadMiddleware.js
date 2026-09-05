@@ -28,13 +28,17 @@ const upload = multer({
             ".pdf",
             ".jpg",
             ".jpeg",
-            ".png"
+            ".png",
+            ".pptx",
+            ".ppt"
         ];
 
         const allowedMimeTypes = [
             "application/pdf",
             "image/jpeg",
-            "image/png"
+            "image/png",
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            "application/vnd.ms-powerpoint"
         ];
         const extension = path.extname(file.originalname).toLowerCase();
         const mimetype = file.mimetype;

@@ -1,6 +1,10 @@
 import { useNavigate } from "react-router-dom";
 import { useState, useEffect } from "react";
 import FileCard from "../components/FileCard";
+import "../styles/dashboard.css";
+import "../styles/fileCard.css";
+import "../styles/auth.css";
+
 
 function Dashboard() {
     const [files, setFiles] = useState([]);
@@ -8,6 +12,7 @@ function Dashboard() {
     const [error, setError] = useState("");
     const [selectedFile, setSelectedFile] = useState(null);
     const [search, setSearch] = useState("");
+    const [showEgg, setShowEgg] = useState(false);
     const navigate = useNavigate();
 
     const user = JSON.parse(
@@ -49,11 +54,16 @@ function Dashboard() {
     };
 
     if (loading) {
-        return <p>Loading files...</p>;
+        return <p className="status-message">Loading files...</p>;
     }
 
 
     const handleSearch = async () => {
+        if (search.trim().toLowerCase() === "aha") {
+            setShowEgg(true);
+            setSearch("");
+            return;
+        }
 
         if (!search.trim()) {
             return;
@@ -208,52 +218,76 @@ function Dashboard() {
     };
 
     return (
-        <div>
-            <h1>Dashboard</h1>
+        <div className="dashboard">
+            <aside className="sidebar">
+                <h2>SecureDocs</h2>
+                <nav className="sidebar-nav">
+                    <button className="nav-item active">My Files</button>
+                    <button className="nav-item">Shared</button>
+                    <button className="nav-item">Activity</button>
+                </nav>
+            </aside>
 
-            {error && <p>{error}</p>}
 
-            <p>Welcome, {user?.username}</p>
-            <p>{user?.email}</p>
+            <main className="main-content">
+                <header className="topbar">
+                    <div>
+                        <h1>My Files</h1>
+                        <p>Welcome, {user?.username}</p>
+                    </div>
 
-            {files.length === 0 ? (
-                <p>No files uploaded yet.</p>
-            ) : (
-                files.map((file) => (
-                    <FileCard
-                        key={file.id}
-                        file={file}
-                        onDownload={handleDownload}
-                        onDelete={handleDelete}
-                        onRename={handleRename}
+                    <button onClick={handleLogout}>
+                        Logout
+                    </button>
+                </header>
 
+                <section className="file-controls">
+                    <input
+                        type="text"
+                        placeholder="Search files..."
+                        value={search}
+                        onChange={(e) => setSearch(e.target.value)}
                     />
-                ))
-            )}
 
-            <input
-                type="text"
-                placeholder="Search files..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-            />
+                    <button onClick={handleSearch}>
+                        Search
+                    </button>
 
-            <button onClick={handleSearch}>
-                Search
-            </button>
+                    <input
+                        type="file"
+                        onChange={(e) => setSelectedFile(e.target.files[0])}
+                    />
 
-            <input
-                type="file"
-                onChange={(e) => setSelectedFile(e.target.files[0])}
-            />
+                    <button onClick={handleUpload}>
+                        Upload
+                    </button>
+                </section>
 
-            <button onClick={handleUpload}>
-                Upload
-            </button>
+                {error && <p className="error-message">{error}</p>}
 
-            <button onClick={handleLogout}>
-                Logout
-            </button>
+                <section className="file-list">
+
+                    {files.length === 0 ? (
+                        <p className="status-message">No files uploaded yet.</p>
+                    ) : (
+                        files.map((file) => (
+                            <FileCard
+                                key={file.id}
+                                file={file}
+                                onDownload={handleDownload}
+                                onDelete={handleDelete}
+                                onRename={handleRename}
+
+                            />
+                        ))
+                    )}
+
+                </section>
+
+
+
+
+            </main>
         </div>
 
     )

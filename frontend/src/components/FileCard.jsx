@@ -17,24 +17,30 @@ function FileCard({
     onRename
 }) {
     return (
-        <div>
-            <h3>{file.original_name}</h3>
-            <p>{file.mime_type}</p>
-            <p>{formatFileSize(file.file_size)}</p>
+        <div className="file-card">
 
+            <div className="file-info">
+                <h3>{file.original_name}</h3>
+                <p>{file.mime_type}</p>
+            </div>
 
+            <div className="file-meta">
+                <p>{formatFileSize(file.file_size)}</p>
 
-            <button onClick={() => onDownload(file.id, file.original_name)}>
-                Download
-            </button>
+                <div className="file-actions">
+                    <button onClick={() => onDownload(file.id, file.original_name)}>
+                        Download
+                    </button>
 
-            <button onClick={() => onRename(file)}>
-                Rename
-            </button>
+                    <button onClick={() => onRename(file)}>
+                        Rename
+                    </button>
 
-            <button onClick={() => onDelete(file.id)}>
-                Delete
-            </button>
+                    <button onClick={() => onDelete(file.id)}>
+                        Delete
+                    </button>
+                </div>
+            </div>
 
 
         </div>

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
+import "../styles/auth.css";
 
 function Register() {
     const [username, setUsername] = useState("");
@@ -11,6 +12,7 @@ function Register() {
 
     const handleRegister = async () => {
         setError("");
+
         const response = await fetch(
             "http://localhost:3000/auth/register",
             {
@@ -27,50 +29,90 @@ function Register() {
         );
 
         const data = await response.json();
+
         if (!response.ok) {
             setError(data.message);
             return;
         }
+
         navigate("/login");
+    };
 
-
-    }
     return (
-        <div>
-            <h1>Create Account</h1>
+        <div className="auth-page">
 
-            <label>Username</label>
-            <input
-                type="text"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-            />
+            <section className="auth-panel">
+                <div className="auth-card">
 
-            <label>Email</label>
-            <input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-            />
+                    <div className="auth-header">
+                        <h1>Create your account</h1>
+                        <p>Start using SecureDocs</p>
+                    </div>
 
-            <label>Password</label>
-            <input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-            />
+                    <div className="auth-form">
 
-            {error && <p>{error}</p>}
+                        <label>Username</label>
+                        <input
+                            type="text"
+                            value={username}
+                            onChange={(e) => setUsername(e.target.value)}
+                        />
 
-            <button onClick={handleRegister}>
-                Register
-            </button>
+                        <label>Email</label>
+                        <input
+                            type="email"
+                            value={email}
+                            onChange={(e) => setEmail(e.target.value)}
+                        />
 
-            <Link to="/login">
-                Already have an account?
-            </Link>
-        </div >
-    )
+                        <label>Password</label>
+                        <input
+                            type="password"
+                            value={password}
+                            onChange={(e) => setPassword(e.target.value)}
+                        />
+
+                        {error && (
+                            <p className="error-message">
+                                {error}
+                            </p>
+                        )}
+
+                        <button onClick={handleRegister}>
+                            Register
+                        </button>
+
+                    </div>
+
+                    <p className="auth-switch">
+                        Already have an account?{" "}
+                        <Link to="/login">
+                            Sign in
+                        </Link>
+                    </p>
+
+                </div>
+            </section>
+
+            <section className="auth-visual">
+                <div className="visual-content">
+
+                    <div className="visual-icon">
+                        ⇄
+                    </div>
+
+                    <h2>Share files with confidence.</h2>
+
+                    <p>
+                        Secure storage, controlled access,
+                        and simple sharing.
+                    </p>
+
+                </div>
+            </section>
+
+        </div>
+    );
 }
 
 export default Register;
