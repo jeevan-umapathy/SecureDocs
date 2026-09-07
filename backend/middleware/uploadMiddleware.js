@@ -1,15 +1,23 @@
 const multer = require("multer");
 const path = require("path");
+const fs = require("fs");
+const { randomUUID } = require("crypto");
+
+const uploadDirectory = path.join(__dirname, "..", "uploads");
+
+fs.mkdirSync(uploadDirectory, { recursive: true });
 
 const storage = multer.diskStorage({
 
     destination: function (req, file, cb) {
-        cb(null, "uploads/");
+        cb(null, "uploadDirectory");
     },
 
     filename: function (req, file, cb) {
+        const extension = path.extname(file.originalname).toLowerCase();
+
         cb(null,
-            `${Date.now()}-${file.originalname}`
+            `${randomUUID()}${extension}`
         );
     }
 
@@ -46,7 +54,12 @@ const upload = multer({
             cb(null, true);
         }
         else {
-            cb(new Error("Only PDF and image files are allowed."));
+            const error = new Error(
+                "Only PDF, JPG, PNG, PPT, and PPTX files are allowed."
+            );
+
+            error.status = 400;
+            cb(error);
         }
     }
 });

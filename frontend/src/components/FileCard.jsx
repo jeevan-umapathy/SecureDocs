@@ -14,13 +14,16 @@ function FileCard({
     file,
     onDownload,
     onDelete,
-    onRename
+    onRename,
+    onShare,
+    readOnly = false
 }) {
     return (
         <div className="file-card">
 
             <div className="file-info">
                 <h3>{file.original_name}</h3>
+                {readOnly && <p>Shared by {file.owner_name}</p>}
                 <p>{file.mime_type}</p>
             </div>
 
@@ -32,13 +35,21 @@ function FileCard({
                         Download
                     </button>
 
-                    <button onClick={() => onRename(file)}>
-                        Rename
-                    </button>
+                    {!readOnly && (
+                        <>
+                            <button onClick={() => onShare(file)}>
+                                Share
+                            </button>
 
-                    <button onClick={() => onDelete(file.id)}>
-                        Delete
-                    </button>
+                            <button onClick={() => onRename(file)}>
+                                Rename
+                            </button>
+
+                            <button onClick={() => onDelete(file.id)}>
+                                Delete
+                            </button>
+                        </>
+                    )}
                 </div>
             </div>
 

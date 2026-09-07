@@ -4,6 +4,7 @@ const router = express.Router();
 const authMiddleware = require("../middleware/authMiddleware");
 const uploadMiddleware = require("../middleware/uploadMiddleware");
 const fileController = require("../controllers/fileController");
+const shareController = require("../controllers/shareController");
 // upload files
 router.post(
     "/upload",
@@ -41,4 +42,16 @@ router.delete(
     authMiddleware,
     fileController.deleteFile
 );
+
+router.post(
+    "/:id/share",
+    authMiddleware,
+    shareController.shareFile
+);
+
+router.get(
+    "/shared",
+    authMiddleware,
+    shareController.getSharedFiles
+)
 module.exports = router;

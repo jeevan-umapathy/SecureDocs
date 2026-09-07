@@ -3,7 +3,7 @@ import { useState, useEffect } from "react";
 import FileCard from "../components/FileCard";
 import "../styles/dashboard.css";
 import "../styles/fileCard.css";
-import "../styles/auth.css";
+
 
 
 function Dashboard() {
@@ -12,7 +12,7 @@ function Dashboard() {
     const [error, setError] = useState("");
     const [selectedFile, setSelectedFile] = useState(null);
     const [search, setSearch] = useState("");
-    const [showEgg, setShowEgg] = useState(false);
+    const [activeTab, setActiveTab] = useState("my");
     const navigate = useNavigate();
 
     const user = JSON.parse(
@@ -21,10 +21,14 @@ function Dashboard() {
 
     useEffect(() => {
         const fetchFiles = async () => {
+            setLoading(true);
+            setError("");
             const token = localStorage.getItem("token");
             try {
                 const response = await fetch(
-                    "http://localhost:3000/files",
+                    activeTab === "shared"
+                        ? "http://localhost:3000/files/shared"
+                        : "http://localhost:3000/files",
                     {
                         headers: {
                             Authorization: `Bearer ${token}`
@@ -45,7 +49,7 @@ function Dashboard() {
             }
         };
         fetchFiles();
-    }, []);
+    }, [activeTab]);
 
     const handleLogout = () => {
         localStorage.removeItem("token");
@@ -81,8 +85,7 @@ function Dashboard() {
         );
 
         const data = await response.json();
-        console.log("SEARCH RESPONSE:", data);
-        console.log("COUNT:", data.files.length);
+
         if (!response.ok) {
             setError(data.message);
             return;
@@ -194,6 +197,52 @@ function Dashboard() {
         );
     };
 
+    const handleShare = async (file) => {
+        const enteredEmail = window.prompt(
+            `Share "${file.original_name}" with which email?`
+        );
+
+        if (enteredEmail === null) return;
+
+        const email = enteredEmail.trim();
+
+        if (!email) {
+            setError("Please enter the recipient's email.");
+            return;
+        }
+
+        setError("");
+
+        try {
+            const token = localStorage.getItem("token");
+
+            const response = await fetch(
+                `http://localhost:3000/files/${file.id}/share`,
+                {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        Authorization: `Bearer ${token}`
+                    },
+                    body: JSON.stringify({ email })
+                }
+
+            );
+
+            const data = await response.json();
+
+            if (!response.ok) {
+                setError(data.message || "Sharing failed.");
+                return;
+            }
+
+            window.alert(`File shared with ${email}`);
+
+        } catch {
+            setError("Could not complete sharing!");
+        }
+    };
+
     const handleDelete = async (fileId) => {
         const token = localStorage.getItem("token");
 
@@ -222,8 +271,21 @@ function Dashboard() {
             <aside className="sidebar">
                 <h2>SecureDocs</h2>
                 <nav className="sidebar-nav">
-                    <button className="nav-item active">My Files</button>
-                    <button className="nav-item">Shared</button>
+
+                    <button
+                        className={`nav-item ${activeTab === "my" ? "active" : ""}`}
+                        onClick={() => setActiveTab("my")}
+                    >
+                        My Files
+                    </button>
+
+                    <button
+                        className={`nav-item ${activeTab === "shared" ? "active" : ""}`}
+                        onClick={() => setActiveTab("shared")}
+                    >
+                        Shared with me
+                    </button>
+
                     <button className="nav-item">Activity</button>
                 </nav>
             </aside>
@@ -232,7 +294,9 @@ function Dashboard() {
             <main className="main-content">
                 <header className="topbar">
                     <div>
-                        <h1>My Files</h1>
+                        <h1>
+                            {activeTab === "my" ? "My Files" : "Shared with me"}
+                        </h1>
                         <p>Welcome, {user?.username}</p>
                     </div>
 
@@ -241,43 +305,50 @@ function Dashboard() {
                     </button>
                 </header>
 
-                <section className="file-controls">
-                    <input
-                        type="text"
-                        placeholder="Search files..."
-                        value={search}
-                        onChange={(e) => setSearch(e.target.value)}
-                    />
+                {activeTab === "my" && (
+                    <section className="file-controls">
+                        <input
+                            type="text"
+                            placeholder="Search files..."
+                            value={search}
+                            onChange={(e) => setSearch(e.target.value)}
+                        />
 
-                    <button onClick={handleSearch}>
-                        Search
-                    </button>
+                        <button onClick={handleSearch}>
+                            Search
+                        </button>
 
-                    <input
-                        type="file"
-                        onChange={(e) => setSelectedFile(e.target.files[0])}
-                    />
+                        <input
+                            type="file"
+                            onChange={(e) => setSelectedFile(e.target.files[0])}
+                        />
 
-                    <button onClick={handleUpload}>
-                        Upload
-                    </button>
-                </section>
+                        <button onClick={handleUpload}>
+                            Upload
+                        </button>
+                    </section>
+                )}
 
                 {error && <p className="error-message">{error}</p>}
 
                 <section className="file-list">
 
                     {files.length === 0 ? (
-                        <p className="status-message">No files uploaded yet.</p>
+                        <p className="status-message">
+                            {activeTab === "shared"
+                                ? "No files have been shared with you yet."
+                                : "No files uploaded yet."}
+                        </p>
                     ) : (
                         files.map((file) => (
                             <FileCard
+                                readOnly={activeTab === "shared"}
                                 key={file.id}
                                 file={file}
                                 onDownload={handleDownload}
                                 onDelete={handleDelete}
                                 onRename={handleRename}
-
+                                onShare={handleShare}
                             />
                         ))
                     )}

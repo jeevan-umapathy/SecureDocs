@@ -100,10 +100,31 @@ async function searchFiles(ownerId, searchTerm) {
     return result.rows;
 }
 
+async function getDownloadableFile(fileId, userId) {
+    const result = await pool.query(
+        `
+        SELECT f.*
+        FROM files AS f
+        WHERE f.id = $2
+            AND (
+                f.owner_id = $2
+                OR EXISTS (
+                    SELECT 1
+                    FROM shares AS s
+                    WHERE s.file_id = f.id
+                        AND s.shared_with = $2
+                )
+            );
+        `,
+        [fileId, userId]
+    );
+    return result.rows[0];
+}
 module.exports = {
     createFile,
     getFilesByOwner,
     getFileById,
+    getDownloadableFile,
     deleteFile,
     updateFileName,
     searchFiles

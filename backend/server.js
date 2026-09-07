@@ -19,6 +19,37 @@ app.use("/users", userRoutes);
 app.use("/auth", authRoutes);
 app.use("/files", fileRoutes);
 
+app.use((err, req, res, next) => {
+    if (res.headersSent) {
+        return next(err);
+    }
+
+    if (err.code === "LIMIT_FILE_SIZE") {
+        return res.status(400).json({
+            message: "File must be 5 MB or smaller."
+        });
+    }
+
+    if (err.name === "MulterError") {
+        return res.status(400).json({
+            message: "Invalid upload. Select one supported file."
+        });
+    }
+
+    if (err.status === 400) {
+        return res.status(400).json({
+            message: err.message
+        });
+    }
+
+    console.error(err);
+
+    return res.status(500).json({
+        message: "Something went wrong. Please try again."
+    });
+
+
+})
 //connecting database
 
 const PORT = process.env.PORT || 3000;
