@@ -54,4 +54,5 @@ router.get(
     authMiddleware,
     shareController.getSharedFiles
 )
+
 module.exports = router;

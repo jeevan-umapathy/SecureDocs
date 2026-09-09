@@ -105,7 +105,7 @@ async function getDownloadableFile(fileId, userId) {
         `
         SELECT f.*
         FROM files AS f
-        WHERE f.id = $2
+        WHERE f.id = $1
             AND (
                 f.owner_id = $2
                 OR EXISTS (

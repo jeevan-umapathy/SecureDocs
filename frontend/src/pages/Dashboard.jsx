@@ -63,11 +63,7 @@ function Dashboard() {
 
 
     const handleSearch = async () => {
-        if (search.trim().toLowerCase() === "aha") {
-            setShowEgg(true);
-            setSearch("");
-            return;
-        }
+
 
         if (!search.trim()) {
             return;
@@ -245,7 +241,7 @@ function Dashboard() {
 
     const handleDelete = async (fileId) => {
         const token = localStorage.getItem("token");
-
+        if (!window.confirm("Delete this file permanently?")) return;
         const response = await fetch(
             `http://localhost:3000/files/${fileId}`,
             {

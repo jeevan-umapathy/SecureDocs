@@ -26,7 +26,7 @@ async function getSharedFiles(userId) {
             u.username AS owner_name
         FROM shares AS s
         JOIN files AS F ON f.id = s.file_id
-        JOIN users AS u ON u.id = s.owner_id
+        JOIN users AS u ON u.id = f.owner_id
         WHERE s.shared_with = $1
         ORDER BY s.shared_at DESC;
         `,
