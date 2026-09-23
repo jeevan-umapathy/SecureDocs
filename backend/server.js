@@ -14,10 +14,25 @@ const indexRoutes = require("./routes/indexRoutes");
 const userRoutes = require("./routes/userRoutes");
 const authRoutes = require("./routes/authRoutes");
 const fileRoutes = require("./routes/fileRoutes");
+const {
+    router: guestRoutes,
+    startGuestTransfer
+} = require("./routes/guestRoutes");
+
+console.log("Loaded file:", require.resolve("./routes/guestRoutes"));
+console.log("Exports:", require("./routes/guestRoutes"));
+console.log({
+    indexRoutes: typeof indexRoutes,
+    userRoutes: typeof userRoutes,
+    authRoutes: typeof authRoutes,
+    fileRoutes: typeof fileRoutes,
+    guestRoutes: typeof guestRoutes
+});
 app.use("/", indexRoutes);
 app.use("/users", userRoutes);
 app.use("/auth", authRoutes);
 app.use("/files", fileRoutes);
+app.use("/guest", guestRoutes);
 
 app.use((err, req, res, next) => {
     if (res.headersSent) {
@@ -57,9 +72,12 @@ async function startServer() {
     try {
         await pool.query("SELECT NOW()");
         console.log("Postgre connected");
-        app.listen(PORT, () => {
+
+        app.listen(PORT, "0.0.0.0", () => {
             console.log(`Server running on ${PORT}`);
+            startGuestTransfer(PORT);
         });
+        server.requestTimeout = 0;
     } catch (error) {
         console.log("failed to connect");
         console.log(error.message);
