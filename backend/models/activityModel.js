@@ -8,6 +8,7 @@ async function record(actorId, action, fileId = null, details = {}, client = poo
     );
 }
 
+
 async function listForUser(userId) {
     const result = await pool.query(
         `SELECT id, action, file_id, details, created_at

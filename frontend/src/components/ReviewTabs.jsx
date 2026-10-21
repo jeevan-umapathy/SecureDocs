@@ -1,5 +1,5 @@
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 const API = "http://localhost:3000";
 
@@ -26,7 +26,7 @@ export default function ReviewTabs({ tab }) {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState("");
 
-    async function load() {
+    const load = useCallback(async () => {
         setLoading(true);
         setError("");
 
@@ -52,11 +52,11 @@ export default function ReviewTabs({ tab }) {
         } finally {
             setLoading(false);
         }
-    }
+    }, [tab]);
 
     useEffect(() => {
         load();
-    }, [tab]);
+    }, [load]);
 
     async function toggleUser(user) {
         if (!window.confirm(

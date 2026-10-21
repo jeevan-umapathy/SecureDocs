@@ -1,5 +1,5 @@
 import { useNavigate } from "react-router-dom";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import FileCard from "../components/FileCard";
 import ReviewTabs from "../components/ReviewTabs";
 import "../styles/dashboard.css";
@@ -12,8 +12,11 @@ function Dashboard() {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState("");
     const [selectedFile, setSelectedFile] = useState(null);
+    const fileInput = useRef(null);
     const [search, setSearch] = useState("");
     const [activeTab, setActiveTab] = useState("my");
+    const [accessFile, setAccessFile] = useState(null);
+    const [recipients, setRecipients] = useState([]);
     const navigate = useNavigate();
 
 
@@ -65,7 +68,7 @@ function Dashboard() {
                     return;
                 }
                 setFiles(data.files);
-            } catch (err) {
+            } catch {
                 setError("Could not connect to the server.");
             } finally {
                 setLoading(false);
@@ -79,11 +82,6 @@ function Dashboard() {
         localStorage.removeItem("user");
         navigate("/login");
     };
-
-    if (loading) {
-        return <p className="status-message">Loading files...</p>;
-    }
-
 
     const handleSearch = async () => {
 
@@ -146,6 +144,7 @@ function Dashboard() {
         ]);
 
         setSelectedFile(null);
+        fileInput.current.value = "";
     };
 
     const handleDownload = async (fileId, fileName) => {
@@ -262,6 +261,48 @@ function Dashboard() {
         }
     };
 
+    const handleManageAccess = async (file) => {
+        setError("");
+        try {
+            const response = await fetch(
+                `http://localhost:3000/files/${file.id}/shares`,
+                {
+                    headers: {
+                        Authorization: `Bearer ${localStorage.getItem("token")}`
+                    }
+                }
+            );
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.message);
+
+            setAccessFile(file);
+            setRecipients(data.shares);
+        } catch (err) {
+            setError(err.message || "Could not load recipients.");
+        }
+    };
+
+    const handleRevoke = async (shareId) => {
+        if (!window.confirm("Revoke this person's access?")) return;
+
+        try {
+            const response = await fetch(
+                `http://localhost:3000/files/${accessFile.id}/shares/${shareId}`,
+                {
+                    method: "DELETE",
+                    headers: {
+                        Authorization: `Bearer ${localStorage.getItem("token")}`
+                    }
+                }
+            );
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.message);
+            setRecipients((current) => current.filter((share) => share.id !== shareId));
+        } catch (err) {
+            setError(err.message || "Could not revoke access.");
+        }
+    };
+
     const handleDelete = async (fileId) => {
         const token = localStorage.getItem("token");
         if (!window.confirm("Delete this file permanently?")) return;
@@ -328,7 +369,9 @@ function Dashboard() {
                 <header className="topbar">
                     <div>
                         <h1>
-                            {activeTab === "my" ? "My Files" : "Shared with me"}
+                            {activeTab === "my" ? "My Files"
+                                : activeTab === "shared" ? "Shared with me"
+                                    : activeTab === "admin" ? "Admin Panel" : "Activity"}
                         </h1>
                         <p>Welcome, {user?.username}</p>
                     </div>
@@ -351,8 +394,24 @@ function Dashboard() {
                             Search
                         </button>
 
+                        <button onClick={() => {
+                            setSearch("");
+                            setError("");
+                            fetch("http://localhost:3000/files", {
+                                headers: {
+                                    Authorization: `Bearer ${localStorage.getItem("token")}`
+                                }
+                            })
+                                .then((response) => response.json())
+                                .then((data) => setFiles(data.files || []))
+                                .catch(() => setError("Could not reload files."));
+                        }}>
+                            Clear
+                        </button>
+
                         <input
                             type="file"
+                            ref={fileInput}
                             onChange={(e) => setSelectedFile(e.target.files[0])}
                         />
 
@@ -364,9 +423,12 @@ function Dashboard() {
 
                 {error && <p className="error-message">{error}</p>}
 
+                {(activeTab === "my" || activeTab === "shared") && (
                 <section className="file-list">
 
-                    {files.length === 0 ? (
+                    {loading ? (
+                        <p className="status-message">Loading files...</p>
+                    ) : files.length === 0 ? (
                         <p className="status-message">
                             {activeTab === "shared"
                                 ? "No files have been shared with you yet."
@@ -382,11 +444,36 @@ function Dashboard() {
                                 onDelete={handleDelete}
                                 onRename={handleRename}
                                 onShare={handleShare}
+                                onManageAccess={handleManageAccess}
                             />
                         ))
                     )}
 
                 </section>
+                )}
+
+                {accessFile && activeTab === "my" && (
+                    <section className="access-panel" aria-label="People with access">
+                        <h2>Access to {accessFile.original_name}</h2>
+                        <button onClick={() => setAccessFile(null)}>Close</button>
+                        {recipients.length === 0 ? <p>Only you have access.</p> : (
+                            <ul>
+                                {recipients.map((share) => (
+                                    <li key={share.id}>
+                                        {share.username} ({share.email})
+                                        <button onClick={() => handleRevoke(share.id)}>
+                                            Revoke
+                                        </button>
+                                    </li>
+                                ))}
+                            </ul>
+                        )}
+                    </section>
+                )}
+
+                {(activeTab === "activity" || activeTab === "admin") && (
+                    <ReviewTabs tab={activeTab} />
+                )}
 
 
 

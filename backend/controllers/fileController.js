@@ -1,5 +1,14 @@
 const fileModel = require("../models/fileModel");
+const activityModel = require("../models/activityModel");
+const transaction = require("../models/transaction");
 const fs = require("fs").promises;
+const path = require("path");
+
+function storedPath(file) {
+    return path.isAbsolute(file.file_path)
+        ? file.file_path
+        : path.resolve(__dirname, "..", file.file_path);
+}
 
 async function uploadFile(req, res) {
     if (!req.file) {
@@ -11,14 +20,21 @@ async function uploadFile(req, res) {
     let savedFile;
 
     try {
-        savedFile = await fileModel.createFile(
-            req.user.id,
-            req.file.originalname,
-            req.file.filename,
-            req.file.path,
-            req.file.mimetype,
-            req.file.size
-        );
+        savedFile = await transaction(async (client) => {
+            const file = await fileModel.createFile(
+                req.user.id,
+                req.file.originalname,
+                req.file.filename,
+                req.file.path,
+                req.file.mimetype,
+                req.file.size,
+                client
+            );
+            await activityModel.record(req.user.id, "upload", file.id, {
+                filename: file.original_name
+            }, client);
+            return file;
+        });
     } catch (error) {
         try {
             await fs.unlink(req.file.path);
@@ -43,7 +59,7 @@ async function getMyFiles(req, res) {
     });
 }
 
-async function downloadFile(req, res) {
+async function downloadFile(req, res, next) {
     const file = await fileModel.getDownloadableFile(req.params.id, req.user.id);
 
     if (!file) {
@@ -51,17 +67,25 @@ async function downloadFile(req, res) {
             message: "file not found"
         });
     }
-    else {
-        res.download(
-            file.file_path,
-            file.original_name
-        )
-    }
+    res.download(storedPath(file), file.original_name, (error) => {
+        if (error) return next(error);
+        activityModel.record(req.user.id, "download", file.id, {
+            filename: file.original_name
+        }).catch((auditError) => console.error("Download audit failed:", auditError));
+    });
 
 }
 
 async function deleteFile(req, res) {
-    const file = await fileModel.getFileById(req.params.id, req.user.id);
+    const file = await transaction(async (client) => {
+        const deleted = await fileModel.deleteFile(req.params.id, req.user.id, client);
+        if (deleted) {
+            await activityModel.record(req.user.id, "delete", deleted.id, {
+                filename: deleted.original_name
+            }, client);
+        }
+        return deleted;
+    });
 
     if (!file) {
         return res.status(404).json({
@@ -69,8 +93,13 @@ async function deleteFile(req, res) {
         });
     }
 
-    await fs.unlink(file.file_path);
-    await fileModel.deleteFile(req.params.id, req.user.id);
+    try {
+        await fs.unlink(storedPath(file));
+    } catch (error) {
+        if (error.code !== "ENOENT") {
+            console.error("File deleted from database; disk cleanup failed:", error);
+        }
+    }
     return res.status(200).json({
         message: "File deleted successfully"
     });
@@ -92,18 +121,25 @@ async function renameFile(req, res) {
     }
 
     const newName = original_name.trim();
-    const file = await fileModel.getFileById(req.params.id, req.user.id);
-
-    if (!file) {
+    const updatedFile = await transaction(async (client) => {
+        const renamed = await fileModel.updateFileName(
+            req.params.id,
+            req.user.id,
+            newName,
+            client
+        );
+        if (renamed) {
+            await activityModel.record(req.user.id, "rename", renamed.id, {
+                filename: renamed.original_name
+            }, client);
+        }
+        return renamed;
+    });
+    if (!updatedFile) {
         return res.status(404).json({
             message: "file not found"
         });
     }
-    const updatedFile = await fileModel.updateFileName(
-        req.params.id,
-        req.user.id,
-        newName
-    );
     return res.status(200).json({
         message: "File renamed successfully",
         file: updatedFile

@@ -1,7 +1,7 @@
 const pool = require("../config/database");
 
-async function createShare(fileId, recipientId) {
-    const result = await pool.query(
+async function createShare(fileId, recipientId, client = pool) {
+    const result = await client.query(
         `
         INSERT INTO shares (file_id, shared_with)
         VALUES ($1, $2)
@@ -11,6 +11,32 @@ async function createShare(fileId, recipientId) {
         [fileId, recipientId]
     );
 
+    return result.rows[0];
+}
+
+async function getRecipients(fileId, ownerId) {
+    const result = await pool.query(
+        `SELECT s.id, u.username, u.email, s.shared_at
+         FROM shares AS s
+         JOIN files AS f ON f.id = s.file_id
+         JOIN users AS u ON u.id = s.shared_with
+         WHERE f.id = $1 AND f.owner_id = $2
+         ORDER BY s.shared_at DESC`,
+        [fileId, ownerId]
+    );
+    return result.rows;
+}
+
+async function revokeShare(fileId, shareId, ownerId, client = pool) {
+    const result = await client.query(
+        `DELETE FROM shares AS s
+         USING files AS f, users AS u
+         WHERE s.id = $1 AND s.file_id = $2
+           AND f.id = s.file_id AND f.owner_id = $3
+           AND u.id = s.shared_with
+         RETURNING s.id, u.email`,
+        [shareId, fileId, ownerId]
+    );
     return result.rows[0];
 }
 
@@ -37,5 +63,7 @@ async function getSharedFiles(userId) {
 
 module.exports = {
     createShare,
-    getSharedFiles
+    getSharedFiles,
+    getRecipients,
+    revokeShare
 };

@@ -31,8 +31,6 @@ CREATE INDEX IF NOT EXISTS audit_logs_time_idx
 CREATE INDEX IF NOT EXISTS files_owner_time_idx ON files (owner_id, uploaded_at DESC);
 CREATE INDEX IF NOT EXISTS shares_recipient_idx ON shares (shared_with);
 CREATE UNIQUE INDEX IF NOT EXISTS shares_file_recipient_unique ON shares (file_id, shared_with);
--- Fail safely on pre-existing case-insensitive duplicates; never silently merge accounts.
-CREATE UNIQUE INDEX IF NOT EXISTS users_email_lower_unique ON users (lower(email));
 COMMIT;
 
 -- After running this migration, promote only your own existing account:
