@@ -7,9 +7,10 @@ async function createFile(
     storedName,
     filePath,
     mimeType,
-    fileSize
+    fileSize,
+    client = pool
 ) {
-    const result = await pool.query(
+    const result = await client.query(
         `
         INSERT INTO files (
         owner_id,
@@ -56,8 +57,8 @@ async function getFileById(fileId, ownerId) {
     return result.rows[0];
 }
 
-async function deleteFile(fileId, ownerId) {
-    const result = await pool.query(
+async function deleteFile(fileId, ownerId, client = pool) {
+    const result = await client.query(
         `
         DELETE FROM files
         WHERE id = $1
@@ -69,8 +70,8 @@ async function deleteFile(fileId, ownerId) {
     return result.rows[0];
 }
 
-async function updateFileName(fileId, ownerId, newName) {
-    const result = await pool.query(
+async function updateFileName(fileId, ownerId, newName, client = pool) {
+    const result = await client.query(
         `
         UPDATE FILES
         SET original_name = $1

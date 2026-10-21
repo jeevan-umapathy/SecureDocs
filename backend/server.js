@@ -18,6 +18,8 @@ app.use("/", indexRoutes);
 app.use("/users", userRoutes);
 app.use("/auth", authRoutes);
 app.use("/files", fileRoutes);
+app.use("/activity", require("./routes/activityRoutes"));
+app.use("/admin", require("./routes/adminRoutes"));
 
 app.use((err, req, res, next) => {
     if (res.headersSent) {
@@ -55,14 +57,17 @@ app.use((err, req, res, next) => {
 const PORT = process.env.PORT || 3000;
 async function startServer() {
     try {
-        await pool.query("SELECT NOW()");
+        await pool.query("SELECT role, is_active FROM users LIMIT 1");
+        await pool.query("SELECT id FROM audit_logs LIMIT 1");
         console.log("Postgre connected");
         app.listen(PORT, () => {
             console.log(`Server running on ${PORT}`);
         });
     } catch (error) {
-        console.log("failed to connect");
-        console.log(error.message);
+        console.error("Database is not ready. Run npm run migrate --prefix backend first.");
+        console.error(error.message);
+        process.exitCode = 1;
+        await pool.end();
     }
 }
 startServer();

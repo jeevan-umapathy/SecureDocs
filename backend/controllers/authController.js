@@ -54,6 +54,11 @@ async function login(req, res) {
             message: "Invalid email or password."
         });
     }
+    if (user.is_active === false) {
+        return res.status(403).json({
+            message: "This account is disabled."
+        });
+    }
     //checks whether a plain-text password matches a stored bcrypt hash.
     const isMatch = await bcrypt.compare(
         password,

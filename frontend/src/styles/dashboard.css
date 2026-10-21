@@ -130,3 +130,63 @@ body {
     border-radius: 6px;
     margin: 16px 0;
 }
+
+.review-panel, .access-panel {
+    margin-top: 24px;
+    padding: 20px;
+    background: white;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+}
+
+.review-stats {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 12px;
+}
+
+.review-stats > div {
+    padding: 16px;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+}
+
+.review-stats strong {
+    display: block;
+    font-size: 22px;
+}
+
+.review-scroll {
+    max-width: 100%;
+    overflow-x: auto;
+}
+
+.review-table {
+    width: 100%;
+    border-collapse: collapse;
+    text-align: left;
+}
+
+.review-table th, .review-table td {
+    padding: 12px;
+    border-bottom: 1px solid #e5e7eb;
+}
+
+.access-panel li {
+    margin: 12px 0;
+}
+
+.access-panel button, .review-table button {
+    margin-left: 12px;
+    padding: 7px 12px;
+    background: white;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    cursor: pointer;
+}
+
+@media (max-width: 800px) {
+    .review-stats {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}

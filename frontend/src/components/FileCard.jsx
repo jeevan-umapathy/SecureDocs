@@ -16,6 +16,7 @@ function FileCard({
     onDelete,
     onRename,
     onShare,
+    onManageAccess,
     readOnly = false
 }) {
     return (
@@ -39,6 +40,10 @@ function FileCard({
                         <>
                             <button onClick={() => onShare(file)}>
                                 Share
+                            </button>
+
+                            <button onClick={() => onManageAccess(file)}>
+                                Manage access
                             </button>
 
                             <button onClick={() => onRename(file)}>

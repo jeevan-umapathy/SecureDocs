@@ -12,6 +12,18 @@ router.post(
     uploadMiddleware.uploadSingle,
     fileController.uploadFile
 );
+
+router.get(
+    "/:id/shares",
+    authMiddleware,
+    shareController.getRecipients
+);
+
+router.delete(
+    "/:id/shares/:shareId",
+    authMiddleware,
+    shareController.revokeShare
+);
 // fetch the user's files
 router.get(
     "/",
