@@ -131,6 +131,46 @@ body {
     margin: 16px 0;
 }
 
+.folders-panel {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin: 20px 0 0;
+}
+
+.folders-panel select, .move-file-label select, .security-panel input {
+    padding: 8px 10px;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    background: white;
+}
+
+.folders-panel button, .security-panel button {
+    padding: 8px 12px;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    background: white;
+    cursor: pointer;
+}
+
+.security-panel form {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+    margin: 20px 0;
+}
+
+.mfa-qr {
+    display: block;
+    width: 200px;
+    max-width: 100%;
+    margin: 16px 0;
+}
+
+.security-panel code { overflow-wrap: anywhere; }
+
 .review-panel, .access-panel {
     margin-top: 24px;
     padding: 20px;

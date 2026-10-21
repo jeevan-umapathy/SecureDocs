@@ -8,6 +8,7 @@ async function createFile(
     filePath,
     mimeType,
     fileSize,
+    folderId,
     client = pool
 ) {
     const result = await client.query(
@@ -18,8 +19,9 @@ async function createFile(
         stored_name,
         file_path,
         mime_type,
-        file_size)
-        VALUES($1,$2,$3,$4,$5,$6)
+        file_size,
+        folder_id)
+        VALUES($1,$2,$3,$4,$5,$6,$7)
         RETURNING *;
         `,
         [
@@ -28,8 +30,22 @@ async function createFile(
             storedName,
             filePath,
             mimeType,
-            fileSize
+            fileSize,
+            folderId
         ]
+    );
+    return result.rows[0];
+}
+
+async function moveFile(fileId, ownerId, folderId, client = pool) {
+    const result = await client.query(
+        `UPDATE files SET folder_id = $3
+         WHERE id = $1 AND owner_id = $2 AND (
+             $3::bigint IS NULL OR EXISTS (
+                 SELECT 1 FROM folders WHERE id = $3 AND owner_id = $2
+             )
+         ) RETURNING *`,
+        [fileId, ownerId, folderId]
     );
     return result.rows[0];
 }
@@ -128,5 +144,6 @@ module.exports = {
     getDownloadableFile,
     deleteFile,
     updateFileName,
-    searchFiles
+    searchFiles,
+    moveFile
 };

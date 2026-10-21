@@ -1,7 +1,9 @@
+import { API } from "../config";
 import { useNavigate } from "react-router-dom";
 import { useState, useEffect, useRef } from "react";
 import FileCard from "../components/FileCard";
 import ReviewTabs from "../components/ReviewTabs";
+import SecurityPanel from "../components/SecurityPanel";
 import "../styles/dashboard.css";
 import "../styles/fileCard.css";
 
@@ -17,6 +19,9 @@ function Dashboard() {
     const [activeTab, setActiveTab] = useState("my");
     const [accessFile, setAccessFile] = useState(null);
     const [recipients, setRecipients] = useState([]);
+    const [folders, setFolders] = useState([]);
+    const [currentFolder, setCurrentFolder] = useState("");
+    const [mfaEnabled, setMfaEnabled] = useState(false);
     const navigate = useNavigate();
 
 
@@ -28,7 +33,7 @@ function Dashboard() {
     const [role, setRole] = useState("user");
 
     useEffect(() => {
-        fetch("http://localhost:3000/users/profile", {
+        fetch(API + "/users/profile", {
             headers: {
                 Authorization: `Bearer ${localStorage.getItem("token")}`
             }
@@ -37,13 +42,22 @@ function Dashboard() {
                 if (!response.ok) throw new Error("Profile unavailable");
                 return response.json();
             })
-            .then(data => setRole(data.user.role))
+            .then(data => {
+                setRole(data.user.role);
+                setMfaEnabled(data.user.mfa_enabled);
+            })
+            .catch(console.error);
+        fetch(API + "/folders", {
+            headers: { Authorization: `Bearer ${localStorage.getItem("token")}` }
+        })
+            .then(response => response.json())
+            .then(data => setFolders(data.folders || []))
             .catch(console.error);
     }, []);
 
     useEffect(() => {
         const fetchFiles = async () => {
-            if (activeTab === "activity" || activeTab === "admin") {
+            if (activeTab === "activity" || activeTab === "admin" || activeTab === "security") {
                 setLoading(false);
                 return;
             }
@@ -53,8 +67,8 @@ function Dashboard() {
             try {
                 const response = await fetch(
                     activeTab === "shared"
-                        ? "http://localhost:3000/files/shared"
-                        : "http://localhost:3000/files",
+                        ? API + "/files/shared"
+                        : API + "/files",
                     {
                         headers: {
                             Authorization: `Bearer ${token}`
@@ -93,7 +107,7 @@ function Dashboard() {
         const token = localStorage.getItem("token");
 
         const response = await fetch(
-            `http://localhost:3000/files/search?q=${encodeURIComponent(search)}`,
+            `${API}/files/search?q=${encodeURIComponent(search)}`,
             {
                 headers: {
                     Authorization: `Bearer ${token}`
@@ -119,9 +133,10 @@ function Dashboard() {
 
         const formData = new FormData();
         formData.append("file", selectedFile);
+        if (currentFolder) formData.append("folder_id", currentFolder);
 
         const response = await fetch(
-            "http://localhost:3000/files/upload",
+            API + "/files/upload",
             {
                 method: "POST",
                 headers: {
@@ -151,7 +166,7 @@ function Dashboard() {
         const token = localStorage.getItem("token");
 
         const response = await fetch(
-            `http://localhost:3000/files/${fileId}/download`,
+            `${API}/files/${fileId}/download`,
             {
                 headers: {
                     Authorization: `Bearer ${token}`
@@ -188,7 +203,7 @@ function Dashboard() {
         const token = localStorage.getItem("token");
 
         const response = await fetch(
-            `http://localhost:3000/files/${file.id}`,
+            `${API}/files/${file.id}`,
             {
                 method: "PATCH",
                 headers: {
@@ -235,7 +250,7 @@ function Dashboard() {
             const token = localStorage.getItem("token");
 
             const response = await fetch(
-                `http://localhost:3000/files/${file.id}/share`,
+                `${API}/files/${file.id}/share`,
                 {
                     method: "POST",
                     headers: {
@@ -265,7 +280,7 @@ function Dashboard() {
         setError("");
         try {
             const response = await fetch(
-                `http://localhost:3000/files/${file.id}/shares`,
+                `${API}/files/${file.id}/shares`,
                 {
                     headers: {
                         Authorization: `Bearer ${localStorage.getItem("token")}`
@@ -287,7 +302,7 @@ function Dashboard() {
 
         try {
             const response = await fetch(
-                `http://localhost:3000/files/${accessFile.id}/shares/${shareId}`,
+                `${API}/files/${accessFile.id}/shares/${shareId}`,
                 {
                     method: "DELETE",
                     headers: {
@@ -307,7 +322,7 @@ function Dashboard() {
         const token = localStorage.getItem("token");
         if (!window.confirm("Delete this file permanently?")) return;
         const response = await fetch(
-            `http://localhost:3000/files/${fileId}`,
+            `${API}/files/${fileId}`,
             {
                 method: "DELETE",
                 headers: {
@@ -325,6 +340,72 @@ function Dashboard() {
             currentFiles.filter((file) => file.id !== fileId)
         );
     };
+
+    const folderRequest = async (path, method, body) => {
+        const response = await fetch(`${API}${path}`, {
+            method,
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${localStorage.getItem("token")}`
+            },
+            ...(body ? { body: JSON.stringify(body) } : {})
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.message || "Folder action failed.");
+        return data;
+    };
+
+    const refreshFolders = async () => {
+        const data = await folderRequest("/folders", "GET");
+        setFolders(data.folders);
+    };
+
+    const createFolder = async () => {
+        const name = window.prompt("New folder name:");
+        if (!name) return;
+        try {
+            await folderRequest("/folders", "POST", {
+                name, parent_id: currentFolder || null
+            });
+            await refreshFolders();
+            setError("");
+        } catch (err) { setError(err.message); }
+    };
+
+    const renameFolder = async () => {
+        const folder = folders.find((item) => String(item.id) === currentFolder);
+        const name = window.prompt("Rename folder:", folder?.name);
+        if (!name) return;
+        try {
+            await folderRequest(`/folders/${currentFolder}`, "PATCH", { name });
+            await refreshFolders();
+            setError("");
+        } catch (err) { setError(err.message); }
+    };
+
+    const deleteFolder = async () => {
+        if (!window.confirm("Delete this empty folder?")) return;
+        try {
+            await folderRequest(`/folders/${currentFolder}`, "DELETE");
+            setCurrentFolder("");
+            await refreshFolders();
+            setError("");
+        } catch (err) { setError(err.message); }
+    };
+
+    const moveFile = async (file, folderId) => {
+        try {
+            const data = await folderRequest(`/files/${file.id}/folder`, "PATCH", {
+                folder_id: folderId || null
+            });
+            setFiles((current) => current.map((item) => item.id === file.id ? data.file : item));
+            setError("");
+        } catch (err) { setError(err.message); }
+    };
+
+    const displayedFiles = activeTab === "my"
+        ? files.filter((file) => String(file.folder_id || "") === currentFolder)
+        : files;
 
     return (
         <div className="dashboard">
@@ -361,6 +442,8 @@ function Dashboard() {
                             Admin Panel
                         </button>
                     )}
+                    <button className={`nav-item ${activeTab === "security" ? "active" : ""}`}
+                        onClick={() => setActiveTab("security")}>Security</button>
                 </nav>
             </aside>
 
@@ -371,7 +454,8 @@ function Dashboard() {
                         <h1>
                             {activeTab === "my" ? "My Files"
                                 : activeTab === "shared" ? "Shared with me"
-                                    : activeTab === "admin" ? "Admin Panel" : "Activity"}
+                                    : activeTab === "admin" ? "Admin Panel"
+                                        : activeTab === "security" ? "Security" : "Activity"}
                         </h1>
                         <p>Welcome, {user?.username}</p>
                     </div>
@@ -380,6 +464,24 @@ function Dashboard() {
                         Logout
                     </button>
                 </header>
+
+                {activeTab === "my" && (
+                    <section className="folders-panel">
+                        <label htmlFor="current-folder">Folder</label>
+                        <select id="current-folder" value={currentFolder}
+                            onChange={(event) => setCurrentFolder(event.target.value)}>
+                            <option value="">My Files (root)</option>
+                            {folders.map((folder) => <option key={folder.id} value={folder.id}>
+                                {folder.parent_id ? "↳ " : ""}{folder.name}
+                            </option>)}
+                        </select>
+                        <button onClick={createFolder}>New folder</button>
+                        {currentFolder && <>
+                            <button onClick={renameFolder}>Rename folder</button>
+                            <button onClick={deleteFolder}>Delete empty folder</button>
+                        </>}
+                    </section>
+                )}
 
                 {activeTab === "my" && (
                     <section className="file-controls">
@@ -397,7 +499,7 @@ function Dashboard() {
                         <button onClick={() => {
                             setSearch("");
                             setError("");
-                            fetch("http://localhost:3000/files", {
+                            fetch(API + "/files", {
                                 headers: {
                                     Authorization: `Bearer ${localStorage.getItem("token")}`
                                 }
@@ -428,14 +530,14 @@ function Dashboard() {
 
                     {loading ? (
                         <p className="status-message">Loading files...</p>
-                    ) : files.length === 0 ? (
+                    ) : displayedFiles.length === 0 ? (
                         <p className="status-message">
                             {activeTab === "shared"
                                 ? "No files have been shared with you yet."
                                 : "No files uploaded yet."}
                         </p>
                     ) : (
-                        files.map((file) => (
+                        displayedFiles.map((file) => (
                             <FileCard
                                 readOnly={activeTab === "shared"}
                                 key={file.id}
@@ -445,6 +547,8 @@ function Dashboard() {
                                 onRename={handleRename}
                                 onShare={handleShare}
                                 onManageAccess={handleManageAccess}
+                                folders={folders}
+                                onMove={moveFile}
                             />
                         ))
                     )}
@@ -473,6 +577,9 @@ function Dashboard() {
 
                 {(activeTab === "activity" || activeTab === "admin") && (
                     <ReviewTabs tab={activeTab} />
+                )}
+                {activeTab === "security" && (
+                    <SecurityPanel enabled={mfaEnabled} onSessionEnded={handleLogout} />
                 )}
 
 

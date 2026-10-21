@@ -17,6 +17,8 @@ function FileCard({
     onRename,
     onShare,
     onManageAccess,
+    folders = [],
+    onMove,
     readOnly = false
 }) {
     return (
@@ -53,6 +55,16 @@ function FileCard({
                             <button onClick={() => onDelete(file.id)}>
                                 Delete
                             </button>
+                            <label className="move-file-label">
+                                Move to
+                                <select value={file.folder_id || ""}
+                                    onChange={(event) => onMove(file, event.target.value)}>
+                                    <option value="">My Files (root)</option>
+                                    {folders.map((folder) => <option key={folder.id} value={folder.id}>
+                                        {folder.name}
+                                    </option>)}
+                                </select>
+                            </label>
                         </>
                     )}
                 </div>

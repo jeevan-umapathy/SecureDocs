@@ -1,3 +1,4 @@
+import { API } from "../config";
 import { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import "../styles/auth.css";
@@ -14,7 +15,7 @@ function Register() {
         setError("");
 
         const response = await fetch(
-            "http://localhost:3000/auth/register",
+            API + "/auth/register",
             {
                 method: "POST",
                 headers: {

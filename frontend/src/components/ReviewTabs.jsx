@@ -1,7 +1,8 @@
+import { API } from "../config";
 
 import { useCallback, useEffect, useState } from "react";
 
-const API = "http://localhost:3000";
+
 
 async function request(path, options = {}) {
     const response = await fetch(API + path, {

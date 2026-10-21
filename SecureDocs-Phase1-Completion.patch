@@ -1,0 +1,2443 @@
+diff --git a/.env.example b/.env.example
+new file mode 100644
+index 0000000..db7b61f
+--- /dev/null
++++ b/.env.example
+@@ -0,0 +1,7 @@
++DB_PASSWORD=replace-with-a-strong-database-password
++JWT_SECRET=replace-with-a-long-random-value
++MFA_ENCRYPTION_KEY=replace-with-64-hex-characters
++STORAGE_DRIVER=local
++SUPABASE_URL=
++SUPABASE_BUCKET=
++SUPABASE_SECRET_KEY=
+diff --git a/README.md b/README.md
+index a5bef83..c70115b 100644
+--- a/README.md
++++ b/README.md
+@@ -3,13 +3,15 @@ Secure Cloud File Sharing Platform with Multi-Factor Authentication
+ 
+ ## DBMS review setup
+ 
+-The Activity and Admin features require the additive PostgreSQL migration in
+-`backend/migrations/001_activity_admin.sql`. It keeps existing users, files,
+-and shares. Back up your database and `backend/uploads` before applying it.
++The additive migrations add Activity, Admin, folders, and authenticator MFA.
++They preserve existing users, files, and shares. Back up the PostgreSQL database
++and `backend/uploads` before applying them.
+ 
+ From the repository root, with `backend/.env` pointing to the existing database:
+ 
+ ```bash
++npm ci --prefix backend
++npm ci --prefix frontend
+ npm run migrate --prefix backend
+ npm run promote --prefix backend -- your-existing-email@example.com
+ npm run dev
+@@ -28,4 +30,65 @@ For the review, the tables are `users`, `files`, `shares`, and `audit_logs`.
+ Foreign keys connect ownership, recipients, and actors. The Admin totals use
+ aggregate queries; the recipient list joins `shares`, `files`, and `users`.
+ File changes and their audit rows share a database transaction where possible.
+-The file bytes remain on local disk.
++File bytes remain on local disk unless Supabase storage is configured below.
++
++## Authenticator MFA
++
++Generate a permanent encryption key once:
++
++```bash
++node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
++```
++
++Put it in `MFA_ENCRYPTION_KEY` in `backend/.env`. Keep a secure backup of the
++key: losing it makes enrolled authenticator secrets unreadable. Sign in, open
++**Security**, confirm your password, scan the QR code in an authenticator app,
++and enter the six-digit code. Future sign-ins require password then code.
++Changing MFA signs out old sessions. Recovery codes and account recovery are
++not implemented, so retain access to your authenticator while testing.
++After enabling MFA, wait for the next six-digit code before signing in again;
++the setup code is consumed once.
++
++## Folders and cloud storage
++
++**My Files** now has folders. A file belongs to one folder or the root; only
++empty folders can be deleted. Existing files remain in the root after migration.
++
++The default `STORAGE_DRIVER=local` keeps uploads in `backend/uploads`. To use
++cloud storage, create a **private** Supabase Storage bucket and set these in
++`backend/.env`:
++
++```text
++STORAGE_DRIVER=supabase
++SUPABASE_URL=https://your-project.supabase.co
++SUPABASE_BUCKET=private-files
++SUPABASE_SECRET_KEY=your-server-only-secret-key
++```
++
++Restart the backend. New uploads go to the private bucket; existing local files
++still download from disk. Keep the secret key only in backend environment
++settings. The backend checks PostgreSQL ownership/shares before fetching an
++object. Never make the bucket public. The app's upload limit is 5 MB. Supabase's
++Free plan currently includes 1 GB of file storage and up to 50 MB per file;
++verify current limits before enabling a project. Its free projects can pause
++after inactivity. Cloud setup cannot be tested without your own project keys.
++If cloud deletion fails after the database record is removed, the backend logs
++an orphaned object for manual cleanup; no further download is authorized.
++
++## Tests and local Docker release
++
++```bash
++npm test --prefix backend
++npm run lint --prefix frontend
++npm run build --prefix frontend
++```
++
++For a **fresh, separate local database** on Docker Desktop, copy `.env.example`
++to `.env`, set strong `DB_PASSWORD`, `JWT_SECRET`, and a permanent
++`MFA_ENCRYPTION_KEY`, then run `docker compose up --build`. The site opens at
++`http://localhost:8080`. Docker uses its own PostgreSQL volume; it does not
++import your existing Windows PostgreSQL data or local uploads. Stop with
++`docker compose down` to preserve the volumes.
++
++Public hosting needs a provider, HTTPS, production secrets, backups, and an
++allowlisted `FRONTEND_ORIGIN`; it is not provisioned by this repository.
+diff --git a/backend/.dockerignore b/backend/.dockerignore
+new file mode 100644
+index 0000000..4530ae9
+--- /dev/null
++++ b/backend/.dockerignore
+@@ -0,0 +1,3 @@
++node_modules
++.env
++uploads
+diff --git a/backend/.env.example b/backend/.env.example
+new file mode 100644
+index 0000000..886bced
+--- /dev/null
++++ b/backend/.env.example
+@@ -0,0 +1,15 @@
++PORT=3000
++DB_HOST=localhost
++DB_PORT=5432
++DB_USER=postgres
++DB_PASSWORD=replace-me
++DB_NAME=securedocs
++JWT_SECRET=replace-with-a-long-random-value
++JWT_EXPIRES_IN=1h
++MFA_ENCRYPTION_KEY=replace-with-64-hex-characters
++FRONTEND_ORIGIN=http://localhost:5173
++STORAGE_DRIVER=local
++# For a private Supabase Storage bucket, use STORAGE_DRIVER=supabase and set:
++# SUPABASE_URL=https://your-project.supabase.co
++# SUPABASE_BUCKET=private-files
++# SUPABASE_SECRET_KEY=your-server-only-secret-key
+diff --git a/backend/Dockerfile b/backend/Dockerfile
+new file mode 100644
+index 0000000..b099bf7
+--- /dev/null
++++ b/backend/Dockerfile
+@@ -0,0 +1,7 @@
++FROM node:22-alpine
++WORKDIR /app
++COPY package*.json ./
++RUN npm ci --omit=dev
++COPY . .
++EXPOSE 3000
++CMD ["sh", "-c", "npm run migrate && npm start"]
+diff --git a/backend/controllers/authController.js b/backend/controllers/authController.js
+index ebeb0de..df1c1b9 100644
+--- a/backend/controllers/authController.js
++++ b/backend/controllers/authController.js
+@@ -1,6 +1,21 @@
+ const authModel = require("../models/authModel");
+ const bcrypt = require("bcrypt");
+ const jwt = require("jsonwebtoken");
++const qrcode = require("qrcode");
++const mfaModel = require("../models/mfaModel");
++const activityModel = require("../models/activityModel");
++const totp = require("../utils/totp");
++const transaction = require("../models/transaction");
++const crypto = require("crypto");
++const mfaAttempts = new Map();
++
++function sessionToken(user) {
++    return jwt.sign(
++        { id: user.id, email: user.email, purpose: "session", version: user.token_version },
++        process.env.JWT_SECRET,
++        { expiresIn: process.env.JWT_EXPIRES_IN || "1h" }
++    );
++}
+ 
+ async function register(req, res) {
+ 
+@@ -71,16 +86,17 @@ async function login(req, res) {
+         });
+     }
+ 
+-    const token = jwt.sign(
+-        {
+-            id: user.id,
+-            email: user.email
+-        },
+-        process.env.JWT_SECRET,
+-        {
+-            expiresIn: process.env.JWT_EXPIRES_IN
+-        }
+-    )
++    if (user.mfa_enabled) {
++        // This token only proves the password step. authMiddleware rejects it.
++        const challenge = jwt.sign(
++            { id: user.id, purpose: "mfa" },
++            process.env.JWT_SECRET,
++            { expiresIn: "5m" }
++        );
++        return res.json({ mfa_required: true, challenge });
++    }
++
++    const token = sessionToken(user);
+ 
+     return res.status(200).json({
+         message: "Login successful",
+@@ -95,7 +111,94 @@ async function login(req, res) {
+ 
+ }
+ 
++async function verifyLoginMfa(req, res) {
++    let challenge;
++    try {
++        challenge = jwt.verify(req.body?.challenge, process.env.JWT_SECRET, { algorithms: ["HS256"] });
++    } catch {
++        return res.status(401).json({ message: "Sign in again; MFA challenge expired." });
++    }
++    if (challenge.purpose !== "mfa" || !Number.isSafeInteger(challenge.id)) {
++        return res.status(401).json({ message: "Invalid MFA challenge." });
++    }
++
++    const attemptKey = crypto.createHash("sha256").update(req.body.challenge).digest("hex");
++    const previous = mfaAttempts.get(attemptKey) || 0;
++    if (previous >= 5) return res.status(429).json({ message: "Too many attempts. Sign in again." });
++    mfaAttempts.set(attemptKey, previous + 1);
++    if (mfaAttempts.size > 5000) mfaAttempts.clear();
++
++    const user = await mfaModel.findById(challenge.id);
++    if (!user || !user.is_active || !user.mfa_enabled || !user.mfa_secret_enc) {
++        return res.status(401).json({ message: "Account unavailable." });
++    }
++    const step = totp.matchingStep(totp.decrypt(user.mfa_secret_enc), req.body?.code);
++    if (step === null || !(await mfaModel.claimStep(user.id, step))) {
++        return res.status(401).json({ message: "Invalid or previously used code." });
++    }
++    mfaAttempts.delete(attemptKey);
++
++    return res.json({
++        token: sessionToken(user),
++        user: { id: user.id, username: user.username, email: user.email }
++    });
++}
++
++async function setupMfa(req, res) {
++    const user = await mfaModel.findById(req.user.id);
++    if (user.mfa_enabled) return res.status(409).json({ message: "MFA is already enabled." });
++    if (!req.body?.password || !(await bcrypt.compare(req.body.password, user.password_hash))) {
++        return res.status(401).json({ message: "Current password is required." });
++    }
++    const secret = totp.generateSecret();
++    await mfaModel.savePending(user.id, totp.encrypt(secret));
++    const label = encodeURIComponent(`SecureDocs:${user.email}`);
++    const uri = `otpauth://totp/${label}?secret=${secret}&issuer=SecureDocs&algorithm=SHA1&digits=6&period=30`;
++    res.set("Cache-Control", "no-store");
++    return res.json({ secret, qr: await qrcode.toDataURL(uri) });
++}
++
++async function enableMfa(req, res) {
++    const user = await mfaModel.findById(req.user.id);
++    if (!user?.mfa_pending_enc || !user.mfa_pending_at ||
++        Date.now() - new Date(user.mfa_pending_at).getTime() > 10 * 60 * 1000) {
++        return res.status(400).json({ message: "Start MFA setup again." });
++    }
++    const step = totp.matchingStep(totp.decrypt(user.mfa_pending_enc), req.body?.code);
++    if (step === null) {
++        return res.status(400).json({ message: "Invalid code or expired setup." });
++    }
++    const enabled = await transaction(async (client) => {
++        const updated = await mfaModel.enable(user.id, user.mfa_pending_enc, step, client);
++        if (updated) await activityModel.record(user.id, "mfa_enabled", null, {}, client);
++        return updated;
++    });
++    if (!enabled) return res.status(400).json({ message: "Invalid code or expired setup." });
++    return res.json({ message: "Authenticator MFA enabled." });
++}
++
++async function disableMfa(req, res) {
++    const user = await mfaModel.findById(req.user.id);
++    if (!user?.mfa_enabled) return res.status(400).json({ message: "MFA is not enabled." });
++    if (!req.body?.password || !(await bcrypt.compare(req.body.password, user.password_hash))) {
++        return res.status(401).json({ message: "Current password is required." });
++    }
++    const step = totp.matchingStep(totp.decrypt(user.mfa_secret_enc), req.body?.code);
++    if (step === null || !(await mfaModel.claimStep(user.id, step))) {
++        return res.status(401).json({ message: "Invalid or previously used code." });
++    }
++    await transaction(async (client) => {
++        await mfaModel.disable(user.id, client);
++        await activityModel.record(user.id, "mfa_disabled", null, {}, client);
++    });
++    return res.json({ message: "Authenticator MFA disabled." });
++}
++
+ module.exports = {
+     register,
+-    login
++    login,
++    verifyLoginMfa,
++    setupMfa,
++    enableMfa,
++    disableMfa
+ };
+diff --git a/backend/controllers/fileController.js b/backend/controllers/fileController.js
+index 71750d5..184115e 100644
+--- a/backend/controllers/fileController.js
++++ b/backend/controllers/fileController.js
+@@ -1,8 +1,10 @@
+ const fileModel = require("../models/fileModel");
+ const activityModel = require("../models/activityModel");
+ const transaction = require("../models/transaction");
+-const fs = require("fs").promises;
+ const path = require("path");
++const { Readable } = require("stream");
++const storage = require("../services/storage");
++const folderModel = require("../models/folderModel");
+ 
+ function storedPath(file) {
+     return path.isAbsolute(file.file_path)
+@@ -17,17 +19,35 @@ async function uploadFile(req, res) {
+         });
+     }
+ 
++    const folderId = req.body?.folder_id || null;
++    let validFolder = folderId === null;
++    try {
++        if (folderId !== null && Number.isSafeInteger(Number(folderId)) && Number(folderId) > 0) {
++            validFolder = await folderModel.exists(req.user.id, folderId);
++        }
++    } catch (error) {
++        await storage.remove(req.file.path).catch(console.error);
++        throw error;
++    }
++    if (!validFolder) {
++        await storage.remove(req.file.path);
++        return res.status(400).json({ message: "Choose one of your folders." });
++    }
++
+     let savedFile;
++    let location = req.file.path;
+ 
+     try {
++        location = await storage.save(req.file);
+         savedFile = await transaction(async (client) => {
+             const file = await fileModel.createFile(
+                 req.user.id,
+                 req.file.originalname,
+                 req.file.filename,
+-                req.file.path,
++                location,
+                 req.file.mimetype,
+                 req.file.size,
++                folderId,
+                 client
+             );
+             await activityModel.record(req.user.id, "upload", file.id, {
+@@ -37,7 +57,7 @@ async function uploadFile(req, res) {
+         });
+     } catch (error) {
+         try {
+-            await fs.unlink(req.file.path);
++            await storage.remove(location);
+         } catch (cleanupError) {
+             console.error("Upload cleanup failed:", cleanupError);
+         }
+@@ -51,6 +71,22 @@ async function uploadFile(req, res) {
+     });
+ }
+ 
++async function moveFile(req, res) {
++    const folderId = req.body?.folder_id ?? null;
++    if (folderId !== null && (!Number.isSafeInteger(Number(folderId)) || Number(folderId) <= 0)) {
++        return res.status(400).json({ message: "Invalid folder ID." });
++    }
++    const file = await transaction(async (client) => {
++        const updated = await fileModel.moveFile(req.params.id, req.user.id, folderId, client);
++        if (updated) await activityModel.record(req.user.id, "file_move", updated.id, {
++            filename: updated.original_name
++        }, client);
++        return updated;
++    });
++    if (!file) return res.status(404).json({ message: "File or folder not found." });
++    return res.json({ file });
++}
++
+ async function getMyFiles(req, res) {
+     const files = await fileModel.getFilesByOwner(req.user.id);
+ 
+@@ -67,11 +103,22 @@ async function downloadFile(req, res, next) {
+             message: "file not found"
+         });
+     }
++    const recordDownload = () => activityModel.record(req.user.id, "download", file.id, {
++        filename: file.original_name
++    }).catch((auditError) => console.error("Download audit failed:", auditError));
++
++    if (storage.isRemote(file.file_path)) {
++        const response = await storage.download(file.file_path);
++        res.attachment(file.original_name);
++        res.setHeader("Content-Type", file.mime_type);
++        Readable.fromWeb(response.body).on("error", next).pipe(res);
++        res.on("finish", recordDownload);
++        return;
++    }
++
+     res.download(storedPath(file), file.original_name, (error) => {
+         if (error) return next(error);
+-        activityModel.record(req.user.id, "download", file.id, {
+-            filename: file.original_name
+-        }).catch((auditError) => console.error("Download audit failed:", auditError));
++        recordDownload();
+     });
+ 
+ }
+@@ -94,7 +141,7 @@ async function deleteFile(req, res) {
+     }
+ 
+     try {
+-        await fs.unlink(storedPath(file));
++        await storage.remove(file.file_path);
+     } catch (error) {
+         if (error.code !== "ENOENT") {
+             console.error("File deleted from database; disk cleanup failed:", error);
+@@ -167,5 +214,6 @@ module.exports = {
+     downloadFile,
+     renameFile,
+     searchFiles,
+-    deleteFile
++    deleteFile,
++    moveFile
+ };
+diff --git a/backend/controllers/folderController.js b/backend/controllers/folderController.js
+new file mode 100644
+index 0000000..3848ed1
+--- /dev/null
++++ b/backend/controllers/folderController.js
+@@ -0,0 +1,74 @@
++const folderModel = require("../models/folderModel");
++const activityModel = require("../models/activityModel");
++const transaction = require("../models/transaction");
++
++function validName(name) {
++    return typeof name === "string" && name.trim().length > 0 &&
++        name.trim().length <= 100 && !/[\/\\\x00-\x1F\x7F]/.test(name);
++}
++
++function validId(value) {
++    return Number.isSafeInteger(Number(value)) && Number(value) > 0;
++}
++
++function databaseError(error) {
++    if (error.code === "23505") {
++        error.status = 409;
++        error.message = "A folder with that name already exists here.";
++    }
++    throw error;
++}
++
++async function listFolders(req, res) {
++    res.json({ folders: await folderModel.list(req.user.id) });
++}
++
++async function createFolder(req, res) {
++    const { name, parent_id: parentId = null } = req.body || {};
++    if (!validName(name) || (parentId !== null && !validId(parentId))) {
++        return res.status(400).json({ message: "Enter a folder name and valid parent." });
++    }
++    try {
++        const folder = await transaction(async (client) => {
++            const created = await folderModel.create(req.user.id, name.trim(), parentId, client);
++            if (created) await activityModel.record(req.user.id, "folder_create", null, {
++                filename: created.name
++            }, client);
++            return created;
++        });
++        if (!folder) return res.status(404).json({ message: "Parent folder not found." });
++        return res.status(201).json({ folder });
++    } catch (error) { databaseError(error); }
++}
++
++async function renameFolder(req, res) {
++    if (!validId(req.params.id) || !validName(req.body?.name)) {
++        return res.status(400).json({ message: "Enter a valid folder name." });
++    }
++    try {
++        const folder = await transaction(async (client) => {
++            const updated = await folderModel.rename(req.user.id, req.params.id, req.body.name.trim(), client);
++            if (updated) await activityModel.record(req.user.id, "folder_rename", null, {
++                filename: updated.name
++            }, client);
++            return updated;
++        });
++        if (!folder) return res.status(404).json({ message: "Folder not found." });
++        return res.json({ folder });
++    } catch (error) { databaseError(error); }
++}
++
++async function deleteFolder(req, res) {
++    if (!validId(req.params.id)) return res.status(400).json({ message: "Invalid folder ID." });
++    const folder = await transaction(async (client) => {
++        const removed = await folderModel.remove(req.user.id, req.params.id, client);
++        if (removed) await activityModel.record(req.user.id, "folder_delete", null, {
++            filename: removed.name
++        }, client);
++        return removed;
++    });
++    if (!folder) return res.status(409).json({ message: "Folder not found or is not empty." });
++    return res.json({ message: "Folder deleted." });
++}
++
++module.exports = { listFolders, createFolder, renameFolder, deleteFolder };
+diff --git a/backend/middleware/authMiddleware.js b/backend/middleware/authMiddleware.js
+index 2f971c5..75b741d 100644
+--- a/backend/middleware/authMiddleware.js
++++ b/backend/middleware/authMiddleware.js
+@@ -6,10 +6,17 @@ module.exports = async function authMiddleware(req, res, next) {
+     let decoded;
+     try { decoded = jwt.verify(match[1], process.env.JWT_SECRET, { algorithms: ['HS256'] }); }
+     catch { return res.status(401).json({ message: 'Invalid or expired token.' }); }
+-    if (!Number.isSafeInteger(decoded.id) || decoded.id <= 0) return res.status(401).json({ message: 'Invalid token.' });
++    if (!Number.isSafeInteger(decoded.id) || decoded.id <= 0 ||
++        (decoded.purpose && decoded.purpose !== 'session')) {
++        return res.status(401).json({ message: 'A completed sign-in is required.' });
++    }
+     try {
+-        const { rows } = await pool.query('SELECT id, username, email, role, is_active FROM users WHERE id = $1', [decoded.id]);
++        const { rows } = await pool.query('SELECT id, username, email, role, is_active, mfa_enabled, token_version FROM users WHERE id = $1', [decoded.id]);
+         if (!rows[0] || !rows[0].is_active) return res.status(403).json({ message: 'Account unavailable or disabled.', code: 'ACCOUNT_DISABLED' });
++        if (decoded.version !== rows[0].token_version &&
++            (rows[0].mfa_enabled || rows[0].token_version !== 0)) {
++            return res.status(401).json({ message: 'Session ended. Sign in again.' });
++        }
+         req.user = rows[0];
+         next();
+     } catch (error) { next(error); }
+diff --git a/backend/migrations/002_mfa_folders.sql b/backend/migrations/002_mfa_folders.sql
+new file mode 100644
+index 0000000..0cc0ead
+--- /dev/null
++++ b/backend/migrations/002_mfa_folders.sql
+@@ -0,0 +1,50 @@
++BEGIN;
++
++ALTER TABLE users
++    ADD COLUMN IF NOT EXISTS mfa_secret_enc TEXT,
++    ADD COLUMN IF NOT EXISTS mfa_pending_enc TEXT,
++    ADD COLUMN IF NOT EXISTS mfa_pending_at TIMESTAMPTZ,
++    ADD COLUMN IF NOT EXISTS mfa_enabled BOOLEAN NOT NULL DEFAULT FALSE,
++    ADD COLUMN IF NOT EXISTS mfa_last_step BIGINT,
++    ADD COLUMN IF NOT EXISTS token_version INTEGER NOT NULL DEFAULT 0;
++
++CREATE TABLE IF NOT EXISTS folders (
++    id BIGSERIAL PRIMARY KEY,
++    owner_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
++    parent_id BIGINT REFERENCES folders(id) ON DELETE RESTRICT,
++    name VARCHAR(100) NOT NULL,
++    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
++    CONSTRAINT folders_name_valid CHECK (length(trim(name)) > 0)
++);
++
++CREATE UNIQUE INDEX IF NOT EXISTS folders_root_name_unique
++    ON folders (owner_id, lower(name)) WHERE parent_id IS NULL;
++CREATE UNIQUE INDEX IF NOT EXISTS folders_child_name_unique
++    ON folders (owner_id, parent_id, lower(name)) WHERE parent_id IS NOT NULL;
++CREATE INDEX IF NOT EXISTS folders_parent_idx ON folders (owner_id, parent_id);
++CREATE UNIQUE INDEX IF NOT EXISTS folders_id_owner_unique ON folders (id, owner_id);
++
++DO $$ BEGIN
++    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'folders_parent_owner_fk') THEN
++        ALTER TABLE folders ADD CONSTRAINT folders_parent_owner_fk
++            FOREIGN KEY (parent_id, owner_id) REFERENCES folders(id, owner_id);
++    END IF;
++END $$;
++
++ALTER TABLE files ADD COLUMN IF NOT EXISTS folder_id BIGINT REFERENCES folders(id) ON DELETE RESTRICT;
++CREATE INDEX IF NOT EXISTS files_folder_idx ON files (owner_id, folder_id);
++DO $$ BEGIN
++    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'files_folder_owner_fk') THEN
++        ALTER TABLE files ADD CONSTRAINT files_folder_owner_fk
++            FOREIGN KEY (folder_id, owner_id) REFERENCES folders(id, owner_id);
++    END IF;
++END $$;
++
++ALTER TABLE audit_logs DROP CONSTRAINT IF EXISTS audit_logs_action_check;
++ALTER TABLE audit_logs ADD CONSTRAINT audit_logs_action_check CHECK (action IN (
++    'upload', 'download', 'rename', 'delete', 'share', 'revoke',
++    'account_disabled', 'account_enabled', 'folder_create', 'folder_rename',
++    'folder_delete', 'file_move', 'mfa_enabled', 'mfa_disabled'
++));
++
++COMMIT;
+diff --git a/backend/models/fileModel.js b/backend/models/fileModel.js
+index ba26aa7..7295e7f 100644
+--- a/backend/models/fileModel.js
++++ b/backend/models/fileModel.js
+@@ -8,6 +8,7 @@ async function createFile(
+     filePath,
+     mimeType,
+     fileSize,
++    folderId,
+     client = pool
+ ) {
+     const result = await client.query(
+@@ -18,8 +19,9 @@ async function createFile(
+         stored_name,
+         file_path,
+         mime_type,
+-        file_size)
+-        VALUES($1,$2,$3,$4,$5,$6)
++        file_size,
++        folder_id)
++        VALUES($1,$2,$3,$4,$5,$6,$7)
+         RETURNING *;
+         `,
+         [
+@@ -28,12 +30,26 @@ async function createFile(
+             storedName,
+             filePath,
+             mimeType,
+-            fileSize
++            fileSize,
++            folderId
+         ]
+     );
+     return result.rows[0];
+ }
+ 
++async function moveFile(fileId, ownerId, folderId, client = pool) {
++    const result = await client.query(
++        `UPDATE files SET folder_id = $3
++         WHERE id = $1 AND owner_id = $2 AND (
++             $3::bigint IS NULL OR EXISTS (
++                 SELECT 1 FROM folders WHERE id = $3 AND owner_id = $2
++             )
++         ) RETURNING *`,
++        [fileId, ownerId, folderId]
++    );
++    return result.rows[0];
++}
++
+ async function getFilesByOwner(ownerId) {
+     const result = await pool.query(
+         `
+@@ -128,5 +144,6 @@ module.exports = {
+     getDownloadableFile,
+     deleteFile,
+     updateFileName,
+-    searchFiles
++    searchFiles,
++    moveFile
+ };
+diff --git a/backend/models/folderModel.js b/backend/models/folderModel.js
+new file mode 100644
+index 0000000..cd24f27
+--- /dev/null
++++ b/backend/models/folderModel.js
+@@ -0,0 +1,51 @@
++const pool = require("../config/database");
++
++async function list(ownerId) {
++    const result = await pool.query(
++        `SELECT id, parent_id, name, created_at FROM folders
++         WHERE owner_id = $1 ORDER BY lower(name)`,
++        [ownerId]
++    );
++    return result.rows;
++}
++
++async function create(ownerId, name, parentId, client = pool) {
++    const result = await client.query(
++        `INSERT INTO folders (owner_id, name, parent_id)
++         SELECT $1, $2, $3 WHERE $3::bigint IS NULL
++         OR EXISTS (SELECT 1 FROM folders WHERE id = $3 AND owner_id = $1)
++         RETURNING id, parent_id, name, created_at`,
++        [ownerId, name, parentId]
++    );
++    return result.rows[0];
++}
++
++async function rename(ownerId, folderId, name, client = pool) {
++    const result = await client.query(
++        `UPDATE folders SET name = $3 WHERE owner_id = $1 AND id = $2
++         RETURNING id, parent_id, name, created_at`,
++        [ownerId, folderId, name]
++    );
++    return result.rows[0];
++}
++
++async function remove(ownerId, folderId, client = pool) {
++    const result = await client.query(
++        `DELETE FROM folders AS f WHERE f.owner_id = $1 AND f.id = $2
++         AND NOT EXISTS (SELECT 1 FROM files WHERE folder_id = f.id)
++         AND NOT EXISTS (SELECT 1 FROM folders WHERE parent_id = f.id)
++         RETURNING f.id, f.name`,
++        [ownerId, folderId]
++    );
++    return result.rows[0];
++}
++
++async function exists(ownerId, folderId, client = pool) {
++    const result = await client.query(
++        `SELECT 1 FROM folders WHERE id = $1 AND owner_id = $2`,
++        [folderId, ownerId]
++    );
++    return result.rowCount === 1;
++}
++
++module.exports = { list, create, rename, remove, exists };
+diff --git a/backend/models/mfaModel.js b/backend/models/mfaModel.js
+new file mode 100644
+index 0000000..46033f9
+--- /dev/null
++++ b/backend/models/mfaModel.js
+@@ -0,0 +1,56 @@
++const pool = require("../config/database");
++
++async function findById(id) {
++    const result = await pool.query(
++        `SELECT id, username, email, password_hash, is_active, mfa_enabled,
++                mfa_secret_enc, mfa_pending_enc, mfa_pending_at, mfa_last_step,
++                token_version
++         FROM users WHERE id = $1`,
++        [id]
++    );
++    return result.rows[0];
++}
++
++async function savePending(id, encrypted) {
++    await pool.query(
++        `UPDATE users SET mfa_pending_enc = $2, mfa_pending_at = NOW()
++         WHERE id = $1 AND mfa_enabled = false`,
++        [id, encrypted]
++    );
++}
++
++async function enable(id, encrypted, step, client = pool) {
++    const result = await client.query(
++        `UPDATE users SET mfa_secret_enc = $2, mfa_pending_enc = NULL,
++                mfa_pending_at = NULL, mfa_enabled = true, mfa_last_step = $3,
++                token_version = token_version + 1
++         WHERE id = $1 AND mfa_enabled = false
++           AND mfa_pending_at > NOW() - INTERVAL '10 minutes'
++         RETURNING id`,
++        [id, encrypted, step]
++    );
++    return result.rowCount === 1;
++}
++
++async function claimStep(id, step, client = pool) {
++    const result = await client.query(
++        `UPDATE users SET mfa_last_step = $2
++         WHERE id = $1 AND mfa_enabled = true AND is_active = true
++           AND (mfa_last_step IS NULL OR mfa_last_step < $2)
++         RETURNING id`,
++        [id, step]
++    );
++    return result.rowCount === 1;
++}
++
++async function disable(id, client = pool) {
++    await client.query(
++        `UPDATE users SET mfa_enabled = false, mfa_secret_enc = NULL,
++                mfa_pending_enc = NULL, mfa_pending_at = NULL, mfa_last_step = NULL,
++                token_version = token_version + 1
++         WHERE id = $1`,
++        [id]
++    );
++}
++
++module.exports = { findById, savePending, enable, claimStep, disable };
+diff --git a/backend/package-lock.json b/backend/package-lock.json
+index 0c8faf7..6ab6517 100644
+--- a/backend/package-lock.json
++++ b/backend/package-lock.json
+@@ -15,12 +15,21 @@
+         "express": "^5.2.1",
+         "jsonwebtoken": "^9.0.3",
+         "multer": "^2.2.0",
+-        "pg": "^8.22.0"
++        "pg": "^8.22.0",
++        "qrcode": "^1.5.4"
+       },
+       "devDependencies": {
++        "@electric-sql/pglite": "^0.5.10",
+         "nodemon": "^3.1.14"
+       }
+     },
++    "node_modules/@electric-sql/pglite": {
++      "version": "0.5.10",
++      "resolved": "https://registry.npmjs.org/@electric-sql/pglite/-/pglite-0.5.10.tgz",
++      "integrity": "sha512-tXc/25U3ulOkiRQuTFdwIv+JhBqtMdAF7Gvo6CfZZWtSB4+hgC4Wr2vwK5ngvvN5PJfAAEGIsfyCVy1JhCOBYw==",
++      "dev": true,
++      "license": "Apache-2.0"
++    },
+     "node_modules/accepts": {
+       "version": "2.0.0",
+       "resolved": "https://registry.npmjs.org/accepts/-/accepts-2.0.0.tgz",
+@@ -34,6 +43,30 @@
+         "node": ">= 0.6"
+       }
+     },
++    "node_modules/ansi-regex": {
++      "version": "5.0.1",
++      "resolved": "https://registry.npmjs.org/ansi-regex/-/ansi-regex-5.0.1.tgz",
++      "integrity": "sha512-quJQXlTSUGL2LH9SUXo8VwsY4soanhgo6LNSm84E1LBcE8s3O0wpdiRzyR9z/ZZJMlMWv37qOOb9pdJlMUEKFQ==",
++      "license": "MIT",
++      "engines": {
++        "node": ">=8"
++      }
++    },
++    "node_modules/ansi-styles": {
++      "version": "4.3.0",
++      "resolved": "https://registry.npmjs.org/ansi-styles/-/ansi-styles-4.3.0.tgz",
++      "integrity": "sha512-zbB9rCJAT1rbjiVDb2hqKFHNYLxgtk8NURxZ3IZwD3F6NtxbXZQCnnSi1Lkx+IDohdPlFp222wVALIheZJQSEg==",
++      "license": "MIT",
++      "dependencies": {
++        "color-convert": "^2.0.1"
++      },
++      "engines": {
++        "node": ">=8"
++      },
++      "funding": {
++        "url": "https://github.com/chalk/ansi-styles?sponsor=1"
++      }
++    },
+     "node_modules/anymatch": {
+       "version": "3.1.3",
+       "resolved": "https://registry.npmjs.org/anymatch/-/anymatch-3.1.3.tgz",
+@@ -215,6 +248,15 @@
+         "url": "https://github.com/sponsors/ljharb"
+       }
+     },
++    "node_modules/camelcase": {
++      "version": "5.3.1",
++      "resolved": "https://registry.npmjs.org/camelcase/-/camelcase-5.3.1.tgz",
++      "integrity": "sha512-L28STB170nwWS63UjtlEOE3dldQApaJXZkOI1uMFfzf3rRuPegHaHesyee+YxQ+W6SvRDQV6UrdOdRiR153wJg==",
++      "license": "MIT",
++      "engines": {
++        "node": ">=6"
++      }
++    },
+     "node_modules/chokidar": {
+       "version": "3.6.0",
+       "resolved": "https://registry.npmjs.org/chokidar/-/chokidar-3.6.0.tgz",
+@@ -240,6 +282,35 @@
+         "fsevents": "~2.3.2"
+       }
+     },
++    "node_modules/cliui": {
++      "version": "6.0.0",
++      "resolved": "https://registry.npmjs.org/cliui/-/cliui-6.0.0.tgz",
++      "integrity": "sha512-t6wbgtoCXvAzst7QgXxJYqPt0usEfbgQdftEPbLL/cvv6HPE5VgvqCuAIDR0NgU52ds6rFwqrgakNLrHEjCbrQ==",
++      "license": "ISC",
++      "dependencies": {
++        "string-width": "^4.2.0",
++        "strip-ansi": "^6.0.0",
++        "wrap-ansi": "^6.2.0"
++      }
++    },
++    "node_modules/color-convert": {
++      "version": "2.0.1",
++      "resolved": "https://registry.npmjs.org/color-convert/-/color-convert-2.0.1.tgz",
++      "integrity": "sha512-RRECPsj7iu/xb5oKYcsFHSppFNnsj/52OVTRKb4zP5onXwVF3zVmmToNcOfGC+CRDpfK/U584fMg38ZHCaElKQ==",
++      "license": "MIT",
++      "dependencies": {
++        "color-name": "~1.1.4"
++      },
++      "engines": {
++        "node": ">=7.0.0"
++      }
++    },
++    "node_modules/color-name": {
++      "version": "1.1.4",
++      "resolved": "https://registry.npmjs.org/color-name/-/color-name-1.1.4.tgz",
++      "integrity": "sha512-dOy+3AuW3a2wNbZHIuMZpTcgjGuLU/uBL/ubcZF9OXbDo8ff4O8yVp5Bf0efS8uEoYo5q4Fx7dY9OgQGXgAsQA==",
++      "license": "MIT"
++    },
+     "node_modules/concat-stream": {
+       "version": "2.0.0",
+       "resolved": "https://registry.npmjs.org/concat-stream/-/concat-stream-2.0.0.tgz",
+@@ -329,6 +400,15 @@
+         }
+       }
+     },
++    "node_modules/decamelize": {
++      "version": "1.2.0",
++      "resolved": "https://registry.npmjs.org/decamelize/-/decamelize-1.2.0.tgz",
++      "integrity": "sha512-z2S+W9X73hAUUki+N+9Za2lBlun89zigOyGrsax+KUQ6wKW4ZoWpEYBkGhQjwAjjDCkWxhY0VKEhk8wzY7F5cA==",
++      "license": "MIT",
++      "engines": {
++        "node": ">=0.10.0"
++      }
++    },
+     "node_modules/depd": {
+       "version": "2.0.0",
+       "resolved": "https://registry.npmjs.org/depd/-/depd-2.0.0.tgz",
+@@ -338,6 +418,12 @@
+         "node": ">= 0.8"
+       }
+     },
++    "node_modules/dijkstrajs": {
++      "version": "1.0.3",
++      "resolved": "https://registry.npmjs.org/dijkstrajs/-/dijkstrajs-1.0.3.tgz",
++      "integrity": "sha512-qiSlmBq9+BCdCA/L46dw8Uy93mloxsPSbwnm5yrKn2vMPiy8KyAskTF6zuV/j5BMsmOGZDPs7KjU+mjb670kfA==",
++      "license": "MIT"
++    },
+     "node_modules/dotenv": {
+       "version": "17.4.2",
+       "resolved": "https://registry.npmjs.org/dotenv/-/dotenv-17.4.2.tgz",
+@@ -379,6 +465,12 @@
+       "integrity": "sha512-WMwm9LhRUo+WUaRN+vRuETqG89IgZphVSNkdFgeb6sS/E4OrDIN7t48CAewSHXc6C8lefD8KKfr5vY61brQlow==",
+       "license": "MIT"
+     },
++    "node_modules/emoji-regex": {
++      "version": "8.0.0",
++      "resolved": "https://registry.npmjs.org/emoji-regex/-/emoji-regex-8.0.0.tgz",
++      "integrity": "sha512-MSjYzcWNOA0ewAHpz0MxpYFvwg6yjy1NG3xteoqz644VCo/RPgnr1/GGt+ic3iJTzQ8Eu3TdM14SawnVUmGE6A==",
++      "license": "MIT"
++    },
+     "node_modules/encodeurl": {
+       "version": "2.0.0",
+       "resolved": "https://registry.npmjs.org/encodeurl/-/encodeurl-2.0.0.tgz",
+@@ -510,6 +602,19 @@
+         "url": "https://opencollective.com/express"
+       }
+     },
++    "node_modules/find-up": {
++      "version": "4.1.0",
++      "resolved": "https://registry.npmjs.org/find-up/-/find-up-4.1.0.tgz",
++      "integrity": "sha512-PpOwAdQ/YlXQ2vj8a3h8IipDuYRi3wceVQQGYWxNINccq40Anw7BlsEXCMbt1Zt+OLA6Fq9suIpIWD0OsnISlw==",
++      "license": "MIT",
++      "dependencies": {
++        "locate-path": "^5.0.0",
++        "path-exists": "^4.0.0"
++      },
++      "engines": {
++        "node": ">=8"
++      }
++    },
+     "node_modules/forwarded": {
+       "version": "0.2.0",
+       "resolved": "https://registry.npmjs.org/forwarded/-/forwarded-0.2.0.tgz",
+@@ -552,6 +657,15 @@
+         "url": "https://github.com/sponsors/ljharb"
+       }
+     },
++    "node_modules/get-caller-file": {
++      "version": "2.0.5",
++      "resolved": "https://registry.npmjs.org/get-caller-file/-/get-caller-file-2.0.5.tgz",
++      "integrity": "sha512-DyFP3BM/3YHTQOCUL/w0OZHR0lpKeGrxotcHWcqNEdnltqFwXVfhEBQ94eIo34AfQpo0rGki4cyIiftY06h2Fg==",
++      "license": "ISC",
++      "engines": {
++        "node": "6.* || 8.* || >= 10.*"
++      }
++    },
+     "node_modules/get-intrinsic": {
+       "version": "1.3.0",
+       "resolved": "https://registry.npmjs.org/get-intrinsic/-/get-intrinsic-1.3.0.tgz",
+@@ -729,6 +843,15 @@
+         "node": ">=0.10.0"
+       }
+     },
++    "node_modules/is-fullwidth-code-point": {
++      "version": "3.0.0",
++      "resolved": "https://registry.npmjs.org/is-fullwidth-code-point/-/is-fullwidth-code-point-3.0.0.tgz",
++      "integrity": "sha512-zymm5+u+sCsSWyD9qNaejV3DFvhCKclKdizYaJUuHA83RLjb7nSuGnddCHGv0hk+KY7BMAlsWeK4Ueg6EV6XQg==",
++      "license": "MIT",
++      "engines": {
++        "node": ">=8"
++      }
++    },
+     "node_modules/is-glob": {
+       "version": "4.0.3",
+       "resolved": "https://registry.npmjs.org/is-glob/-/is-glob-4.0.3.tgz",
+@@ -801,6 +924,18 @@
+         "safe-buffer": "^5.0.1"
+       }
+     },
++    "node_modules/locate-path": {
++      "version": "5.0.0",
++      "resolved": "https://registry.npmjs.org/locate-path/-/locate-path-5.0.0.tgz",
++      "integrity": "sha512-t7hw9pI+WvuwNJXwk5zVHpyhIqzg2qTlklJOf0mVxGSbe3Fp2VieZcduNYjaLDoy6p9uGpQEGWG87WpMKlNq8g==",
++      "license": "MIT",
++      "dependencies": {
++        "p-locate": "^4.1.0"
++      },
++      "engines": {
++        "node": ">=8"
++      }
++    },
+     "node_modules/lodash.includes": {
+       "version": "4.3.0",
+       "resolved": "https://registry.npmjs.org/lodash.includes/-/lodash.includes-4.3.0.tgz",
+@@ -1116,6 +1251,42 @@
+         "wrappy": "1"
+       }
+     },
++    "node_modules/p-limit": {
++      "version": "2.3.0",
++      "resolved": "https://registry.npmjs.org/p-limit/-/p-limit-2.3.0.tgz",
++      "integrity": "sha512-//88mFWSJx8lxCzwdAABTJL2MyWB12+eIY7MDL2SqLmAkeKU9qxRvWuSyTjm3FUmpBEMuFfckAIqEaVGUDxb6w==",
++      "license": "MIT",
++      "dependencies": {
++        "p-try": "^2.0.0"
++      },
++      "engines": {
++        "node": ">=6"
++      },
++      "funding": {
++        "url": "https://github.com/sponsors/sindresorhus"
++      }
++    },
++    "node_modules/p-locate": {
++      "version": "4.1.0",
++      "resolved": "https://registry.npmjs.org/p-locate/-/p-locate-4.1.0.tgz",
++      "integrity": "sha512-R79ZZ/0wAxKGu3oYMlz8jy/kbhsNrS7SKZ7PxEHBgJ5+F2mtFW2fK2cOtBh1cHYkQsbzFV7I+EoRKe6Yt0oK7A==",
++      "license": "MIT",
++      "dependencies": {
++        "p-limit": "^2.2.0"
++      },
++      "engines": {
++        "node": ">=8"
++      }
++    },
++    "node_modules/p-try": {
++      "version": "2.2.0",
++      "resolved": "https://registry.npmjs.org/p-try/-/p-try-2.2.0.tgz",
++      "integrity": "sha512-R4nPAVTAU0B9D35/Gk3uJf/7XYbQcyohSKdvAxIRSNghFl4e71hVoGnBNQz9cWaXxO2I10KTC+3jMdvvoKw6dQ==",
++      "license": "MIT",
++      "engines": {
++        "node": ">=6"
++      }
++    },
+     "node_modules/parseurl": {
+       "version": "1.3.3",
+       "resolved": "https://registry.npmjs.org/parseurl/-/parseurl-1.3.3.tgz",
+@@ -1125,6 +1296,15 @@
+         "node": ">= 0.8"
+       }
+     },
++    "node_modules/path-exists": {
++      "version": "4.0.0",
++      "resolved": "https://registry.npmjs.org/path-exists/-/path-exists-4.0.0.tgz",
++      "integrity": "sha512-ak9Qy5Q7jYb2Wwcey5Fpvg2KoAc/ZIhLSLOSBmRmygPsGwkVVt0fZa0qrtMz+m6tJTAHfZQ8FnmB4MG4LWy7/w==",
++      "license": "MIT",
++      "engines": {
++        "node": ">=8"
++      }
++    },
+     "node_modules/path-to-regexp": {
+       "version": "8.4.2",
+       "resolved": "https://registry.npmjs.org/path-to-regexp/-/path-to-regexp-8.4.2.tgz",
+@@ -1237,6 +1417,15 @@
+         "url": "https://github.com/sponsors/jonschlinkert"
+       }
+     },
++    "node_modules/pngjs": {
++      "version": "5.0.0",
++      "resolved": "https://registry.npmjs.org/pngjs/-/pngjs-5.0.0.tgz",
++      "integrity": "sha512-40QW5YalBNfQo5yRYmiw7Yz6TKKVr3h6970B2YE+3fQpsWcrbj1PzJgxeJ19DRQjhMbKPIuMY8rFaXc8moolVw==",
++      "license": "MIT",
++      "engines": {
++        "node": ">=10.13.0"
++      }
++    },
+     "node_modules/postgres-array": {
+       "version": "2.0.0",
+       "resolved": "https://registry.npmjs.org/postgres-array/-/postgres-array-2.0.0.tgz",
+@@ -1296,6 +1485,23 @@
+       "dev": true,
+       "license": "MIT"
+     },
++    "node_modules/qrcode": {
++      "version": "1.5.4",
++      "resolved": "https://registry.npmjs.org/qrcode/-/qrcode-1.5.4.tgz",
++      "integrity": "sha512-1ca71Zgiu6ORjHqFBDpnSMTR2ReToX4l1Au1VFLyVeBTFavzQnv5JxMFr3ukHVKpSrSA2MCk0lNJSykjUfz7Zg==",
++      "license": "MIT",
++      "dependencies": {
++        "dijkstrajs": "^1.0.1",
++        "pngjs": "^5.0.0",
++        "yargs": "^15.3.1"
++      },
++      "bin": {
++        "qrcode": "bin/qrcode"
++      },
++      "engines": {
++        "node": ">=10.13.0"
++      }
++    },
+     "node_modules/qs": {
+       "version": "6.16.0",
+       "resolved": "https://registry.npmjs.org/qs/-/qs-6.16.0.tgz",
+@@ -1367,6 +1573,21 @@
+         "node": ">=8.10.0"
+       }
+     },
++    "node_modules/require-directory": {
++      "version": "2.1.1",
++      "resolved": "https://registry.npmjs.org/require-directory/-/require-directory-2.1.1.tgz",
++      "integrity": "sha512-fGxEI7+wsG9xrvdjsrlmL22OMTTiHRwAMroiEeMgq8gzoLC/PQr7RsRDSTLUg/bZAZtF+TVIkHc6/4RIKrui+Q==",
++      "license": "MIT",
++      "engines": {
++        "node": ">=0.10.0"
++      }
++    },
++    "node_modules/require-main-filename": {
++      "version": "2.0.0",
++      "resolved": "https://registry.npmjs.org/require-main-filename/-/require-main-filename-2.0.0.tgz",
++      "integrity": "sha512-NKN5kMDylKuldxYLSUfrbo5Tuzh4hd+2E8NPPX02mZtn1VuREQToYe/ZdlJy+J3uCpfaiGF05e7B8W0iXbQHmg==",
++      "license": "ISC"
++    },
+     "node_modules/router": {
+       "version": "2.2.0",
+       "resolved": "https://registry.npmjs.org/router/-/router-2.2.0.tgz",
+@@ -1466,6 +1687,12 @@
+         "url": "https://opencollective.com/express"
+       }
+     },
++    "node_modules/set-blocking": {
++      "version": "2.0.0",
++      "resolved": "https://registry.npmjs.org/set-blocking/-/set-blocking-2.0.0.tgz",
++      "integrity": "sha512-KiKBS8AnWGEyLzofFfmvKwpdPzqiy16LvQfK3yv/fVH7Bj13/wl3JSR1J+rfgRE9q7xUJK4qvgS8raSOeLUehw==",
++      "license": "ISC"
++    },
+     "node_modules/setprototypeof": {
+       "version": "1.2.0",
+       "resolved": "https://registry.npmjs.org/setprototypeof/-/setprototypeof-1.2.0.tgz",
+@@ -1592,6 +1819,32 @@
+         "safe-buffer": "~5.2.0"
+       }
+     },
++    "node_modules/string-width": {
++      "version": "4.2.3",
++      "resolved": "https://registry.npmjs.org/string-width/-/string-width-4.2.3.tgz",
++      "integrity": "sha512-wKyQRQpjJ0sIp62ErSZdGsjMJWsap5oRNihHhu6G7JVO/9jIB6UyevL+tXuOqrng8j/cxKTWyWUwvSTriiZz/g==",
++      "license": "MIT",
++      "dependencies": {
++        "emoji-regex": "^8.0.0",
++        "is-fullwidth-code-point": "^3.0.0",
++        "strip-ansi": "^6.0.1"
++      },
++      "engines": {
++        "node": ">=8"
++      }
++    },
++    "node_modules/strip-ansi": {
++      "version": "6.0.1",
++      "resolved": "https://registry.npmjs.org/strip-ansi/-/strip-ansi-6.0.1.tgz",
++      "integrity": "sha512-Y38VPSHcqkFrCpFnQ9vuSXmquuv5oXOKpGeT6aGrr3o3Gc9AlVa6JBfUSOCnbxGGZF+/0ooI7KrPuUSztUdU5A==",
++      "license": "MIT",
++      "dependencies": {
++        "ansi-regex": "^5.0.1"
++      },
++      "engines": {
++        "node": ">=8"
++      }
++    },
+     "node_modules/supports-color": {
+       "version": "5.5.0",
+       "resolved": "https://registry.npmjs.org/supports-color/-/supports-color-5.5.0.tgz",
+@@ -1705,6 +1958,26 @@
+         "node": ">= 0.8"
+       }
+     },
++    "node_modules/which-module": {
++      "version": "2.0.1",
++      "resolved": "https://registry.npmjs.org/which-module/-/which-module-2.0.1.tgz",
++      "integrity": "sha512-iBdZ57RDvnOR9AGBhML2vFZf7h8vmBjhoaZqODJBFWHVtKkDmKuHai3cx5PgVMrX5YDNp27AofYbAwctSS+vhQ==",
++      "license": "ISC"
++    },
++    "node_modules/wrap-ansi": {
++      "version": "6.2.0",
++      "resolved": "https://registry.npmjs.org/wrap-ansi/-/wrap-ansi-6.2.0.tgz",
++      "integrity": "sha512-r6lPcBGxZXlIcymEu7InxDMhdW0KDxpLgoFLcguasxCaJ/SOIZwINatK9KY/tf+ZrlywOKU0UDj3ATXUBfxJXA==",
++      "license": "MIT",
++      "dependencies": {
++        "ansi-styles": "^4.0.0",
++        "string-width": "^4.1.0",
++        "strip-ansi": "^6.0.0"
++      },
++      "engines": {
++        "node": ">=8"
++      }
++    },
+     "node_modules/wrappy": {
+       "version": "1.0.2",
+       "resolved": "https://registry.npmjs.org/wrappy/-/wrappy-1.0.2.tgz",
+@@ -1719,6 +1992,47 @@
+       "engines": {
+         "node": ">=0.4"
+       }
++    },
++    "node_modules/y18n": {
++      "version": "4.0.3",
++      "resolved": "https://registry.npmjs.org/y18n/-/y18n-4.0.3.tgz",
++      "integrity": "sha512-JKhqTOwSrqNA1NY5lSztJ1GrBiUodLMmIZuLiDaMRJ+itFd+ABVE8XBjOvIWL+rSqNDC74LCSFmlb/U4UZ4hJQ==",
++      "license": "ISC"
++    },
++    "node_modules/yargs": {
++      "version": "15.4.1",
++      "resolved": "https://registry.npmjs.org/yargs/-/yargs-15.4.1.tgz",
++      "integrity": "sha512-aePbxDmcYW++PaqBsJ+HYUFwCdv4LVvdnhBy78E57PIor8/OVvhMrADFFEDh8DHDFRv/O9i3lPhsENjO7QX0+A==",
++      "license": "MIT",
++      "dependencies": {
++        "cliui": "^6.0.0",
++        "decamelize": "^1.2.0",
++        "find-up": "^4.1.0",
++        "get-caller-file": "^2.0.1",
++        "require-directory": "^2.1.1",
++        "require-main-filename": "^2.0.0",
++        "set-blocking": "^2.0.0",
++        "string-width": "^4.2.0",
++        "which-module": "^2.0.0",
++        "y18n": "^4.0.0",
++        "yargs-parser": "^18.1.2"
++      },
++      "engines": {
++        "node": ">=8"
++      }
++    },
++    "node_modules/yargs-parser": {
++      "version": "18.1.3",
++      "resolved": "https://registry.npmjs.org/yargs-parser/-/yargs-parser-18.1.3.tgz",
++      "integrity": "sha512-o50j0JeToy/4K6OZcaQmW6lyXXKhq7csREXcDwk2omFPJEwUNOVtJKvmDr9EI1fAJZUyZcRF7kxGBWmRXudrCQ==",
++      "license": "ISC",
++      "dependencies": {
++        "camelcase": "^5.0.0",
++        "decamelize": "^1.2.0"
++      },
++      "engines": {
++        "node": ">=6"
++      }
+     }
+   }
+ }
+diff --git a/backend/package.json b/backend/package.json
+index 49213bb..c5dfd2a 100644
+--- a/backend/package.json
++++ b/backend/package.json
+@@ -4,7 +4,7 @@
+   "description": "",
+   "main": "index.js",
+   "scripts": {
+-    "test": "echo \"Error: no test specified\" && exit 1",
++    "test": "node --test tests/*.test.js",
+     "start": "node server.js",
+     "dev": "nodemon server.js",
+     "migrate": "node scripts/migrate.js",
+@@ -21,9 +21,11 @@
+     "express": "^5.2.1",
+     "jsonwebtoken": "^9.0.3",
+     "multer": "^2.2.0",
+-    "pg": "^8.22.0"
++    "pg": "^8.22.0",
++    "qrcode": "^1.5.4"
+   },
+   "devDependencies": {
++    "@electric-sql/pglite": "^0.5.10",
+     "nodemon": "^3.1.14"
+   }
+ }
+diff --git a/backend/routes/authRoutes.js b/backend/routes/authRoutes.js
+index b9f561a..a4d5dac 100644
+--- a/backend/routes/authRoutes.js
++++ b/backend/routes/authRoutes.js
+@@ -2,7 +2,12 @@ const express = require("express");
+ const router = express.Router();
+ 
+ const authController = require("../controllers/authController");
++const authMiddleware = require("../middleware/authMiddleware");
+ 
+ router.post("/register", authController.register);
+ router.post("/login", authController.login);
+-module.exports = router;
+\ No newline at end of file
++router.post("/login/mfa", authController.verifyLoginMfa);
++router.post("/mfa/setup", authMiddleware, authController.setupMfa);
++router.post("/mfa/enable", authMiddleware, authController.enableMfa);
++router.post("/mfa/disable", authMiddleware, authController.disableMfa);
++module.exports = router;
+diff --git a/backend/routes/fileRoutes.js b/backend/routes/fileRoutes.js
+index 22711df..8a734c8 100644
+--- a/backend/routes/fileRoutes.js
++++ b/backend/routes/fileRoutes.js
+@@ -49,6 +49,12 @@ router.patch(
+     fileController.renameFile
+ );
+ 
++router.patch(
++    "/:id/folder",
++    authMiddleware,
++    fileController.moveFile
++);
++
+ router.delete(
+     "/:id",
+     authMiddleware,
+diff --git a/backend/routes/folderRoutes.js b/backend/routes/folderRoutes.js
+new file mode 100644
+index 0000000..be1c087
+--- /dev/null
++++ b/backend/routes/folderRoutes.js
+@@ -0,0 +1,12 @@
++const express = require("express");
++const authMiddleware = require("../middleware/authMiddleware");
++const folderController = require("../controllers/folderController");
++
++const router = express.Router();
++router.use(authMiddleware);
++router.get("/", folderController.listFolders);
++router.post("/", folderController.createFolder);
++router.patch("/:id", folderController.renameFolder);
++router.delete("/:id", folderController.deleteFolder);
++
++module.exports = router;
+diff --git a/backend/scripts/migrate.js b/backend/scripts/migrate.js
+index c876e0b..11e97e6 100644
+--- a/backend/scripts/migrate.js
++++ b/backend/scripts/migrate.js
+@@ -5,8 +5,11 @@ const pool = require('../config/database');
+ (async () => {
+     const client = await pool.connect();
+     try {
+-        await client.query(await fs.readFile(path.join(__dirname, '../migrations/001_activity_admin.sql'), 'utf8'));
+-        console.log('Activity/admin migration applied. Existing rows preserved.');
++        for (const filename of ['001_activity_admin.sql', '002_mfa_folders.sql']) {
++            await client.query(await fs.readFile(path.join(__dirname, '..', 'migrations', filename), 'utf8'));
++            console.log('Applied', filename);
++        }
++        console.log('Migrations complete. Existing rows preserved.');
+     } catch (error) {
+         await client.query('ROLLBACK');
+         console.error('Migration failed and rolled back:', error.message);
+diff --git a/backend/server.js b/backend/server.js
+index f567d48..52d4606 100644
+--- a/backend/server.js
++++ b/backend/server.js
+@@ -3,7 +3,7 @@ const express = require("express");
+ const cors = require("cors");
+ const app = express();
+ app.use(express.json());
+-app.use(cors());
++app.use(cors({ origin: process.env.FRONTEND_ORIGIN || "http://localhost:5173" }));
+ 
+ const pool = require("./config/database");
+ 
+@@ -18,6 +18,7 @@ app.use("/", indexRoutes);
+ app.use("/users", userRoutes);
+ app.use("/auth", authRoutes);
+ app.use("/files", fileRoutes);
++app.use("/folders", require("./routes/folderRoutes"));
+ app.use("/activity", require("./routes/activityRoutes"));
+ app.use("/admin", require("./routes/adminRoutes"));
+ 
+@@ -38,8 +39,8 @@ app.use((err, req, res, next) => {
+         });
+     }
+ 
+-    if (err.status === 400) {
+-        return res.status(400).json({
++    if (err.status >= 400 && err.status < 500) {
++        return res.status(err.status).json({
+             message: err.message
+         });
+     }
+@@ -57,8 +58,11 @@ app.use((err, req, res, next) => {
+ const PORT = process.env.PORT || 3000;
+ async function startServer() {
+     try {
++        if (!process.env.JWT_SECRET) throw new Error("Set JWT_SECRET in backend/.env");
+         await pool.query("SELECT role, is_active FROM users LIMIT 1");
+         await pool.query("SELECT id FROM audit_logs LIMIT 1");
++        await pool.query("SELECT mfa_enabled, mfa_secret_enc, token_version FROM users LIMIT 1");
++        await pool.query("SELECT id FROM folders LIMIT 1");
+         console.log("Postgre connected");
+         app.listen(PORT, () => {
+             console.log(`Server running on ${PORT}`);
+diff --git a/backend/services/storage.js b/backend/services/storage.js
+new file mode 100644
+index 0000000..54c5f2f
+--- /dev/null
++++ b/backend/services/storage.js
+@@ -0,0 +1,73 @@
++const fs = require("fs").promises;
++const path = require("path");
++const { randomUUID } = require("crypto");
++
++function isRemote(location) {
++    return location.startsWith("supabase://");
++}
++
++function config() {
++    const origin = process.env.SUPABASE_URL;
++    const bucket = process.env.SUPABASE_BUCKET;
++    const key = process.env.SUPABASE_SECRET_KEY;
++    if (!origin || !/^https:\/\//.test(origin) || !bucket ||
++        !/^[a-zA-Z0-9_-]+$/.test(bucket) || !key) {
++        throw new Error("Configure SUPABASE_URL, SUPABASE_BUCKET and SUPABASE_SECRET_KEY in backend/.env");
++    }
++    return { origin: origin.replace(/\/$/, ""), bucket, key };
++}
++
++function objectUrl(location, authenticated = false) {
++    const { origin, bucket } = config();
++    const objectKey = location.slice("supabase://".length);
++    const encoded = objectKey.split("/").map(encodeURIComponent).join("/");
++    return `${origin}/storage/v1/object/${authenticated ? "authenticated/" : ""}${bucket}/${encoded}`;
++}
++
++function headers(extra = {}) {
++    const { key } = config();
++    // New sb_secret_* keys are API keys, not JWTs. A Bearer header rejects them.
++    return { apikey: key, ...extra };
++}
++
++async function save(file) {
++    if (process.env.STORAGE_DRIVER !== "supabase") return file.path;
++
++    const key = `${randomUUID()}${path.extname(file.originalname).toLowerCase()}`;
++    const location = `supabase://${key}`;
++    const response = await fetch(objectUrl(location), {
++        method: "POST",
++        headers: headers({ "Content-Type": file.mimetype, "x-upsert": "false" }),
++        body: await fs.readFile(file.path),
++        signal: AbortSignal.timeout(30000)
++    });
++    if (!response.ok) throw new Error(`Cloud upload failed (${response.status}).`);
++    await fs.unlink(file.path);
++    return location;
++}
++
++async function download(location) {
++    const response = await fetch(objectUrl(location, true), {
++        headers: headers(),
++        signal: AbortSignal.timeout(30000)
++    });
++    if (!response.ok) throw new Error(`Cloud download failed (${response.status}).`);
++    return response;
++}
++
++async function remove(location) {
++    if (!isRemote(location)) {
++        const resolved = path.isAbsolute(location) ? location : path.resolve(__dirname, "..", location);
++        try { await fs.unlink(resolved); }
++        catch (error) { if (error.code !== "ENOENT") throw error; }
++        return;
++    }
++    const response = await fetch(objectUrl(location), {
++        method: "DELETE",
++        headers: headers(),
++        signal: AbortSignal.timeout(30000)
++    });
++    if (!response.ok && response.status !== 404) throw new Error(`Cloud delete failed (${response.status}).`);
++}
++
++module.exports = { save, download, remove, isRemote };
+diff --git a/backend/tests/phase1.test.js b/backend/tests/phase1.test.js
+new file mode 100644
+index 0000000..ed9b90a
+--- /dev/null
++++ b/backend/tests/phase1.test.js
+@@ -0,0 +1,139 @@
++const test = require("node:test");
++const assert = require("node:assert/strict");
++const fs = require("node:fs/promises");
++const path = require("node:path");
++const os = require("node:os");
++const jwt = require("jsonwebtoken");
++const { PGlite } = require("@electric-sql/pglite");
++const totp = require("../utils/totp");
++const folderModel = require("../models/folderModel");
++const fileModel = require("../models/fileModel");
++const activityModel = require("../models/activityModel");
++const shareModel = require("../models/shareModel");
++const mfaModel = require("../models/mfaModel");
++const storage = require("../services/storage");
++
++const legacySchema = `
++CREATE TABLE users (id SERIAL PRIMARY KEY, username TEXT NOT NULL, email TEXT NOT NULL,
++    password_hash TEXT NOT NULL);
++CREATE TABLE files (id SERIAL PRIMARY KEY, owner_id INTEGER REFERENCES users(id),
++    original_name TEXT, stored_name TEXT, file_path TEXT, mime_type TEXT,
++    file_size BIGINT, uploaded_at TIMESTAMPTZ DEFAULT NOW());
++CREATE TABLE shares (id SERIAL PRIMARY KEY, file_id INTEGER REFERENCES files(id) ON DELETE CASCADE,
++    shared_with INTEGER REFERENCES users(id), shared_at TIMESTAMPTZ DEFAULT NOW(),
++    UNIQUE (file_id, shared_with));
++`;
++
++test("migrations preserve existing rows and folder ownership", async () => {
++    const db = new PGlite();
++    try {
++        await db.exec(legacySchema);
++        await db.query("INSERT INTO users(username,email,password_hash) VALUES ('A','a@test','hash'),('B','b@test','hash')");
++        await db.query(`INSERT INTO files(owner_id,original_name,stored_name,file_path,mime_type,file_size)
++                        VALUES (1,'notes.pdf','n.pdf','uploads/n.pdf','application/pdf',5)`);
++        await db.query("INSERT INTO shares(file_id,shared_with) VALUES (1,2)");
++
++        for (let run = 0; run < 2; run++) {
++            for (const name of ["001_activity_admin.sql", "002_mfa_folders.sql"]) {
++                await db.exec(await fs.readFile(path.join(__dirname, "../migrations", name), "utf8"));
++            }
++        }
++        assert.equal((await db.query("SELECT count(*)::integer AS count FROM files")).rows[0].count, 1);
++        assert.equal((await db.query("SELECT count(*)::integer AS count FROM shares")).rows[0].count, 1);
++
++        const own = await folderModel.create(1, "Project", null, db);
++        const other = await folderModel.create(2, "Private", null, db);
++        assert.equal(await folderModel.create(1, "Wrong parent", other.id, db), undefined);
++        assert.equal(await fileModel.moveFile(1, 1, other.id, db), undefined);
++        assert.equal((await fileModel.moveFile(1, 1, own.id, db)).folder_id, own.id);
++        await assert.rejects(db.query("UPDATE files SET folder_id = $1 WHERE id = 1", [other.id]));
++        assert.equal(await folderModel.remove(1, own.id, db), undefined);
++
++        await db.query("UPDATE users SET mfa_enabled = true WHERE id = 1");
++        assert.equal(await mfaModel.claimStep(1, 500, db), true);
++        assert.equal(await mfaModel.claimStep(1, 500, db), false);
++        assert.equal(await mfaModel.claimStep(1, 501, db), true);
++
++        assert.equal(await shareModel.revokeShare(1, 1, 2, db), undefined);
++        assert.equal((await db.query("SELECT count(*)::integer AS count FROM shares")).rows[0].count, 1);
++        assert.equal((await shareModel.revokeShare(1, 1, 1, db)).email, "b@test");
++        assert.equal((await db.query("SELECT count(*)::integer AS count FROM shares")).rows[0].count, 0);
++
++        await activityModel.record(1, "delete", 1, { filename: "notes.pdf" }, db);
++        await db.query("DELETE FROM files WHERE id = 1");
++        const event = (await db.query("SELECT file_id, details FROM audit_logs WHERE action = 'delete'")).rows[0];
++        assert.equal(event.file_id, null);
++        assert.equal(event.details.filename, "notes.pdf");
++    } finally { await db.close(); }
++});
++
++test("TOTP matches the RFC counter and encrypted secrets round-trip", () => {
++    const original = process.env.MFA_ENCRYPTION_KEY;
++    process.env.MFA_ENCRYPTION_KEY = "a1".repeat(32);
++    try {
++        const secret = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ";
++        assert.equal(totp.codeAt(secret, 1), "287082");
++        assert.equal(totp.matchingStep(secret, "287082", 59000), 1);
++        assert.equal(totp.matchingStep(secret, "000000", 59000), null);
++        assert.equal(totp.decrypt(totp.encrypt(secret)), secret);
++        const encrypted = totp.encrypt(secret);
++        assert.notEqual(encrypted, totp.encrypt(secret));
++    } finally {
++        if (original === undefined) delete process.env.MFA_ENCRYPTION_KEY;
++        else process.env.MFA_ENCRYPTION_KEY = original;
++    }
++});
++
++test("MFA challenge cannot use protected routes", async () => {
++    const original = process.env.JWT_SECRET;
++    process.env.JWT_SECRET = "test-secret";
++    try {
++        const middleware = require("../middleware/authMiddleware");
++        const challenge = jwt.sign({ id: 1, purpose: "mfa" }, process.env.JWT_SECRET);
++        let nextCalled = false;
++        let status;
++        const res = { status(code) { status = code; return this; }, json() { return this; } };
++        await middleware({ headers: { authorization: `Bearer ${challenge}` } }, res,
++            () => { nextCalled = true; });
++        assert.equal(status, 401);
++        assert.equal(nextCalled, false);
++    } finally {
++        if (original === undefined) delete process.env.JWT_SECRET;
++        else process.env.JWT_SECRET = original;
++    }
++});
++
++test("private cloud storage keeps its secret in backend requests", async () => {
++    const previous = { ...process.env };
++    const originalFetch = global.fetch;
++    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "securedocs-"));
++    const filename = path.join(dir, "temporary.pdf");
++    await fs.writeFile(filename, "demo");
++    process.env.STORAGE_DRIVER = "supabase";
++    process.env.SUPABASE_URL = "https://example.supabase.co";
++    process.env.SUPABASE_BUCKET = "private-files";
++    process.env.SUPABASE_SECRET_KEY = "test-secret";
++    const requests = [];
++    global.fetch = async (url, options) => {
++        requests.push({ url, options });
++        return new Response("demo", { status: 200 });
++    };
++    try {
++        const location = await storage.save({ path: filename, originalname: "file.pdf", mimetype: "application/pdf" });
++        assert.match(location, /^supabase:\/\//);
++        await assert.rejects(fs.stat(filename), { code: "ENOENT" });
++        await storage.download(location);
++        await storage.remove(location);
++        assert.deepEqual(requests.map(item => item.options.method || "GET"), ["POST", "GET", "DELETE"]);
++        assert.match(requests[1].url, /\/object\/authenticated\/private-files\//);
++        assert.equal(requests[0].options.headers.apikey, "test-secret");
++        assert.equal(requests[0].options.headers.Authorization, undefined);
++    } finally {
++        global.fetch = originalFetch;
++        for (const key of ["STORAGE_DRIVER", "SUPABASE_URL", "SUPABASE_BUCKET", "SUPABASE_SECRET_KEY"]) {
++            if (previous[key] === undefined) delete process.env[key];
++            else process.env[key] = previous[key];
++        }
++        await fs.rm(dir, { recursive: true, force: true });
++    }
++});
+diff --git a/backend/utils/totp.js b/backend/utils/totp.js
+new file mode 100644
+index 0000000..02b902b
+--- /dev/null
++++ b/backend/utils/totp.js
+@@ -0,0 +1,83 @@
++const crypto = require("crypto");
++
++const ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
++
++function generateSecret() {
++    const bytes = crypto.randomBytes(20);
++    let bits = 0;
++    let value = 0;
++    let output = "";
++    for (const byte of bytes) {
++        value = (value << 8) | byte;
++        bits += 8;
++        while (bits >= 5) {
++            output += ALPHABET[(value >>> (bits - 5)) & 31];
++            bits -= 5;
++        }
++    }
++    if (bits) output += ALPHABET[(value << (5 - bits)) & 31];
++    return output;
++}
++
++function decodeSecret(secret) {
++    let bits = 0;
++    let value = 0;
++    const bytes = [];
++    for (const letter of secret.replace(/=+$/, "")) {
++        const digit = ALPHABET.indexOf(letter);
++        if (digit < 0) throw new Error("Invalid MFA secret");
++        value = (value << 5) | digit;
++        bits += 5;
++        if (bits >= 8) {
++            bytes.push((value >>> (bits - 8)) & 255);
++            bits -= 8;
++        }
++    }
++    return Buffer.from(bytes);
++}
++
++function codeAt(secret, step) {
++    const counter = Buffer.alloc(8);
++    counter.writeBigUInt64BE(BigInt(step));
++    const hash = crypto.createHmac("sha1", decodeSecret(secret)).update(counter).digest();
++    const offset = hash[hash.length - 1] & 15;
++    return String((hash.readUInt32BE(offset) & 0x7fffffff) % 1000000).padStart(6, "0");
++}
++
++function matchingStep(secret, input, now = Date.now()) {
++    if (typeof input !== "string" || !/^\d{6}$/.test(input)) return null;
++    const step = Math.floor(now / 30000);
++    for (const candidate of [step, step - 1, step + 1]) {
++        if (candidate < 0) continue;
++        if (crypto.timingSafeEqual(Buffer.from(codeAt(secret, candidate)), Buffer.from(input))) {
++            return candidate;
++        }
++    }
++    return null;
++}
++
++function encryptionKey() {
++    const key = process.env.MFA_ENCRYPTION_KEY;
++    if (!key || !/^[a-f0-9]{64}$/i.test(key)) {
++        const error = new Error("MFA_ENCRYPTION_KEY must be 32 bytes in hex in backend/.env");
++        error.status = 503;
++        throw error;
++    }
++    return Buffer.from(key, "hex");
++}
++
++function encrypt(secret) {
++    const iv = crypto.randomBytes(12);
++    const cipher = crypto.createCipheriv("aes-256-gcm", encryptionKey(), iv);
++    const data = Buffer.concat([cipher.update(secret, "utf8"), cipher.final()]);
++    return [iv, cipher.getAuthTag(), data].map(part => part.toString("base64url")).join(".");
++}
++
++function decrypt(stored) {
++    const [iv, tag, data] = stored.split(".").map(part => Buffer.from(part, "base64url"));
++    const decipher = crypto.createDecipheriv("aes-256-gcm", encryptionKey(), iv);
++    decipher.setAuthTag(tag);
++    return Buffer.concat([decipher.update(data), decipher.final()]).toString("utf8");
++}
++
++module.exports = { generateSecret, matchingStep, encrypt, decrypt, codeAt };
+diff --git a/compose.yaml b/compose.yaml
+new file mode 100644
+index 0000000..a8a84b9
+--- /dev/null
++++ b/compose.yaml
+@@ -0,0 +1,50 @@
++services:
++  db:
++    image: postgres:16-alpine
++    environment:
++      POSTGRES_USER: securedocs
++      POSTGRES_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env}
++      POSTGRES_DB: securedocs
++    volumes:
++      - pgdata:/var/lib/postgresql/data
++    healthcheck:
++      test: ["CMD-SHELL", "pg_isready -U securedocs -d securedocs"]
++      interval: 5s
++      timeout: 3s
++      retries: 15
++
++  backend:
++    build: ./backend
++    depends_on:
++      db:
++        condition: service_healthy
++    environment:
++      PORT: 3000
++      DB_HOST: db
++      DB_PORT: 5432
++      DB_USER: securedocs
++      DB_PASSWORD: ${DB_PASSWORD}
++      DB_NAME: securedocs
++      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
++      JWT_EXPIRES_IN: 1h
++      MFA_ENCRYPTION_KEY: ${MFA_ENCRYPTION_KEY:?Set MFA_ENCRYPTION_KEY in .env}
++      FRONTEND_ORIGIN: http://localhost:8080
++      STORAGE_DRIVER: ${STORAGE_DRIVER:-local}
++      SUPABASE_URL: ${SUPABASE_URL:-}
++      SUPABASE_BUCKET: ${SUPABASE_BUCKET:-}
++      SUPABASE_SECRET_KEY: ${SUPABASE_SECRET_KEY:-}
++    ports:
++      - "3000:3000"
++    volumes:
++      - uploads:/app/uploads
++
++  frontend:
++    build: ./frontend
++    depends_on:
++      - backend
++    ports:
++      - "8080:80"
++
++volumes:
++  pgdata:
++  uploads:
+diff --git a/frontend/.dockerignore b/frontend/.dockerignore
+new file mode 100644
+index 0000000..9c97bbd
+--- /dev/null
++++ b/frontend/.dockerignore
+@@ -0,0 +1,3 @@
++node_modules
++dist
++.env
+diff --git a/frontend/.env.example b/frontend/.env.example
+new file mode 100644
+index 0000000..5317fce
+--- /dev/null
++++ b/frontend/.env.example
+@@ -0,0 +1 @@
++VITE_API_URL=http://localhost:3000
+diff --git a/frontend/Dockerfile b/frontend/Dockerfile
+new file mode 100644
+index 0000000..0ab71a0
+--- /dev/null
++++ b/frontend/Dockerfile
+@@ -0,0 +1,13 @@
++FROM node:22-alpine AS build
++WORKDIR /app
++COPY package*.json ./
++RUN npm ci
++COPY . .
++ARG VITE_API_URL=http://localhost:3000
++ENV VITE_API_URL=$VITE_API_URL
++RUN npm run build
++
++FROM nginx:alpine
++COPY nginx.conf /etc/nginx/conf.d/default.conf
++COPY --from=build /app/dist /usr/share/nginx/html
++EXPOSE 80
+diff --git a/frontend/nginx.conf b/frontend/nginx.conf
+new file mode 100644
+index 0000000..c8636da
+--- /dev/null
++++ b/frontend/nginx.conf
+@@ -0,0 +1,7 @@
++server {
++    listen 80;
++    server_name _;
++    root /usr/share/nginx/html;
++    index index.html;
++    location / { try_files $uri $uri/ /index.html; }
++}
+diff --git a/frontend/src/components/FileCard.jsx b/frontend/src/components/FileCard.jsx
+index f1d212e..4f51f9c 100644
+--- a/frontend/src/components/FileCard.jsx
++++ b/frontend/src/components/FileCard.jsx
+@@ -17,6 +17,8 @@ function FileCard({
+     onRename,
+     onShare,
+     onManageAccess,
++    folders = [],
++    onMove,
+     readOnly = false
+ }) {
+     return (
+@@ -53,6 +55,16 @@ function FileCard({
+                             <button onClick={() => onDelete(file.id)}>
+                                 Delete
+                             </button>
++                            <label className="move-file-label">
++                                Move to
++                                <select value={file.folder_id || ""}
++                                    onChange={(event) => onMove(file, event.target.value)}>
++                                    <option value="">My Files (root)</option>
++                                    {folders.map((folder) => <option key={folder.id} value={folder.id}>
++                                        {folder.name}
++                                    </option>)}
++                                </select>
++                            </label>
+                         </>
+                     )}
+                 </div>
+diff --git a/frontend/src/components/ReviewTabs.jsx b/frontend/src/components/ReviewTabs.jsx
+index be745c1..200fa57 100644
+--- a/frontend/src/components/ReviewTabs.jsx
++++ b/frontend/src/components/ReviewTabs.jsx
+@@ -1,7 +1,8 @@
++import { API } from "../config";
+ 
+ import { useCallback, useEffect, useState } from "react";
+ 
+-const API = "http://localhost:3000";
++
+ 
+ async function request(path, options = {}) {
+     const response = await fetch(API + path, {
+diff --git a/frontend/src/components/SecurityPanel.jsx b/frontend/src/components/SecurityPanel.jsx
+new file mode 100644
+index 0000000..2240bd6
+--- /dev/null
++++ b/frontend/src/components/SecurityPanel.jsx
+@@ -0,0 +1,80 @@
++import { API } from "../config";
++import { useState } from "react";
++
++
++
++export default function SecurityPanel({ enabled, onSessionEnded }) {
++    const [password, setPassword] = useState("");
++    const [code, setCode] = useState("");
++    const [setup, setSetup] = useState(null);
++    const [error, setError] = useState("");
++    const [busy, setBusy] = useState(false);
++
++    async function request(path, body) {
++        const response = await fetch(API + path, {
++            method: "POST",
++            headers: {
++                "Content-Type": "application/json",
++                Authorization: `Bearer ${localStorage.getItem("token")}`
++            },
++            body: JSON.stringify(body)
++        });
++        const data = await response.json();
++        if (!response.ok) throw new Error(data.message || "Request failed.");
++        return data;
++    }
++
++    async function startSetup(event) {
++        event.preventDefault();
++        setError(""); setBusy(true);
++        try {
++            setSetup(await request("/auth/mfa/setup", { password }));
++            setPassword("");
++        } catch (err) { setError(err.message); }
++        finally { setBusy(false); }
++    }
++
++    async function complete(event) {
++        event.preventDefault();
++        setError(""); setBusy(true);
++        try {
++            await request(setup ? "/auth/mfa/enable" : "/auth/mfa/disable",
++                setup ? { code } : { code, password });
++            setSetup(null);
++            onSessionEnded();
++        } catch (err) { setError(err.message); }
++        finally { setBusy(false); }
++    }
++
++    return <section className="review-panel security-panel">
++        <h2>Authenticator MFA</h2>
++        <p>{enabled ? "Enabled. Your password and a six-digit code are required at sign-in."
++            : "Add an authenticator app to protect sign-ins."}</p>
++        {error && <p className="error-message" role="alert">{error}</p>}
++
++        {!enabled && !setup && <form onSubmit={startSetup}>
++            <label htmlFor="setup-password">Current password</label>
++            <input id="setup-password" type="password" required value={password}
++                onChange={(event) => setPassword(event.target.value)} />
++            <button disabled={busy}>Set up MFA</button>
++        </form>}
++
++        {setup && <>
++            <p>Scan this QR code in Google Authenticator or another TOTP app.</p>
++            <img className="mfa-qr" src={setup.qr} alt="Authenticator setup QR code" />
++            <p>Manual setup key: <code>{setup.secret}</code></p>
++            <p>Setup expires in 10 minutes. Keep this key private.</p>
++        </>}
++
++        {(setup || enabled) && <form onSubmit={complete}>
++            {enabled && <><label htmlFor="disable-password">Current password</label>
++                <input id="disable-password" type="password" required value={password}
++                    onChange={(event) => setPassword(event.target.value)} /></>}
++            <label htmlFor="security-code">Six-digit authenticator code</label>
++            <input id="security-code" inputMode="numeric" autoComplete="one-time-code"
++                maxLength={6} required value={code} onChange={(event) => setCode(event.target.value)} />
++            <button disabled={busy}>{setup ? "Enable MFA" : "Disable MFA"}</button>
++        </form>}
++        <p>After changing MFA, sign in again with your new settings.</p>
++    </section>;
++}
+diff --git a/frontend/src/config.js b/frontend/src/config.js
+new file mode 100644
+index 0000000..5a5445e
+--- /dev/null
++++ b/frontend/src/config.js
+@@ -0,0 +1 @@
++export const API = import.meta.env.VITE_API_URL || "http://localhost:3000";
+diff --git a/frontend/src/pages/Dashboard.jsx b/frontend/src/pages/Dashboard.jsx
+index 64be4a4..8158a0b 100644
+--- a/frontend/src/pages/Dashboard.jsx
++++ b/frontend/src/pages/Dashboard.jsx
+@@ -1,7 +1,9 @@
++import { API } from "../config";
+ import { useNavigate } from "react-router-dom";
+ import { useState, useEffect, useRef } from "react";
+ import FileCard from "../components/FileCard";
+ import ReviewTabs from "../components/ReviewTabs";
++import SecurityPanel from "../components/SecurityPanel";
+ import "../styles/dashboard.css";
+ import "../styles/fileCard.css";
+ 
+@@ -17,6 +19,9 @@ function Dashboard() {
+     const [activeTab, setActiveTab] = useState("my");
+     const [accessFile, setAccessFile] = useState(null);
+     const [recipients, setRecipients] = useState([]);
++    const [folders, setFolders] = useState([]);
++    const [currentFolder, setCurrentFolder] = useState("");
++    const [mfaEnabled, setMfaEnabled] = useState(false);
+     const navigate = useNavigate();
+ 
+ 
+@@ -28,7 +33,7 @@ function Dashboard() {
+     const [role, setRole] = useState("user");
+ 
+     useEffect(() => {
+-        fetch("http://localhost:3000/users/profile", {
++        fetch(API + "/users/profile", {
+             headers: {
+                 Authorization: `Bearer ${localStorage.getItem("token")}`
+             }
+@@ -37,13 +42,22 @@ function Dashboard() {
+                 if (!response.ok) throw new Error("Profile unavailable");
+                 return response.json();
+             })
+-            .then(data => setRole(data.user.role))
++            .then(data => {
++                setRole(data.user.role);
++                setMfaEnabled(data.user.mfa_enabled);
++            })
++            .catch(console.error);
++        fetch(API + "/folders", {
++            headers: { Authorization: `Bearer ${localStorage.getItem("token")}` }
++        })
++            .then(response => response.json())
++            .then(data => setFolders(data.folders || []))
+             .catch(console.error);
+     }, []);
+ 
+     useEffect(() => {
+         const fetchFiles = async () => {
+-            if (activeTab === "activity" || activeTab === "admin") {
++            if (activeTab === "activity" || activeTab === "admin" || activeTab === "security") {
+                 setLoading(false);
+                 return;
+             }
+@@ -53,8 +67,8 @@ function Dashboard() {
+             try {
+                 const response = await fetch(
+                     activeTab === "shared"
+-                        ? "http://localhost:3000/files/shared"
+-                        : "http://localhost:3000/files",
++                        ? API + "/files/shared"
++                        : API + "/files",
+                     {
+                         headers: {
+                             Authorization: `Bearer ${token}`
+@@ -93,7 +107,7 @@ function Dashboard() {
+         const token = localStorage.getItem("token");
+ 
+         const response = await fetch(
+-            `http://localhost:3000/files/search?q=${encodeURIComponent(search)}`,
++            `${API}/files/search?q=${encodeURIComponent(search)}`,
+             {
+                 headers: {
+                     Authorization: `Bearer ${token}`
+@@ -119,9 +133,10 @@ function Dashboard() {
+ 
+         const formData = new FormData();
+         formData.append("file", selectedFile);
++        if (currentFolder) formData.append("folder_id", currentFolder);
+ 
+         const response = await fetch(
+-            "http://localhost:3000/files/upload",
++            API + "/files/upload",
+             {
+                 method: "POST",
+                 headers: {
+@@ -151,7 +166,7 @@ function Dashboard() {
+         const token = localStorage.getItem("token");
+ 
+         const response = await fetch(
+-            `http://localhost:3000/files/${fileId}/download`,
++            `${API}/files/${fileId}/download`,
+             {
+                 headers: {
+                     Authorization: `Bearer ${token}`
+@@ -188,7 +203,7 @@ function Dashboard() {
+         const token = localStorage.getItem("token");
+ 
+         const response = await fetch(
+-            `http://localhost:3000/files/${file.id}`,
++            `${API}/files/${file.id}`,
+             {
+                 method: "PATCH",
+                 headers: {
+@@ -235,7 +250,7 @@ function Dashboard() {
+             const token = localStorage.getItem("token");
+ 
+             const response = await fetch(
+-                `http://localhost:3000/files/${file.id}/share`,
++                `${API}/files/${file.id}/share`,
+                 {
+                     method: "POST",
+                     headers: {
+@@ -265,7 +280,7 @@ function Dashboard() {
+         setError("");
+         try {
+             const response = await fetch(
+-                `http://localhost:3000/files/${file.id}/shares`,
++                `${API}/files/${file.id}/shares`,
+                 {
+                     headers: {
+                         Authorization: `Bearer ${localStorage.getItem("token")}`
+@@ -287,7 +302,7 @@ function Dashboard() {
+ 
+         try {
+             const response = await fetch(
+-                `http://localhost:3000/files/${accessFile.id}/shares/${shareId}`,
++                `${API}/files/${accessFile.id}/shares/${shareId}`,
+                 {
+                     method: "DELETE",
+                     headers: {
+@@ -307,7 +322,7 @@ function Dashboard() {
+         const token = localStorage.getItem("token");
+         if (!window.confirm("Delete this file permanently?")) return;
+         const response = await fetch(
+-            `http://localhost:3000/files/${fileId}`,
++            `${API}/files/${fileId}`,
+             {
+                 method: "DELETE",
+                 headers: {
+@@ -326,6 +341,72 @@ function Dashboard() {
+         );
+     };
+ 
++    const folderRequest = async (path, method, body) => {
++        const response = await fetch(`${API}${path}`, {
++            method,
++            headers: {
++                "Content-Type": "application/json",
++                Authorization: `Bearer ${localStorage.getItem("token")}`
++            },
++            ...(body ? { body: JSON.stringify(body) } : {})
++        });
++        const data = await response.json();
++        if (!response.ok) throw new Error(data.message || "Folder action failed.");
++        return data;
++    };
++
++    const refreshFolders = async () => {
++        const data = await folderRequest("/folders", "GET");
++        setFolders(data.folders);
++    };
++
++    const createFolder = async () => {
++        const name = window.prompt("New folder name:");
++        if (!name) return;
++        try {
++            await folderRequest("/folders", "POST", {
++                name, parent_id: currentFolder || null
++            });
++            await refreshFolders();
++            setError("");
++        } catch (err) { setError(err.message); }
++    };
++
++    const renameFolder = async () => {
++        const folder = folders.find((item) => String(item.id) === currentFolder);
++        const name = window.prompt("Rename folder:", folder?.name);
++        if (!name) return;
++        try {
++            await folderRequest(`/folders/${currentFolder}`, "PATCH", { name });
++            await refreshFolders();
++            setError("");
++        } catch (err) { setError(err.message); }
++    };
++
++    const deleteFolder = async () => {
++        if (!window.confirm("Delete this empty folder?")) return;
++        try {
++            await folderRequest(`/folders/${currentFolder}`, "DELETE");
++            setCurrentFolder("");
++            await refreshFolders();
++            setError("");
++        } catch (err) { setError(err.message); }
++    };
++
++    const moveFile = async (file, folderId) => {
++        try {
++            const data = await folderRequest(`/files/${file.id}/folder`, "PATCH", {
++                folder_id: folderId || null
++            });
++            setFiles((current) => current.map((item) => item.id === file.id ? data.file : item));
++            setError("");
++        } catch (err) { setError(err.message); }
++    };
++
++    const displayedFiles = activeTab === "my"
++        ? files.filter((file) => String(file.folder_id || "") === currentFolder)
++        : files;
++
+     return (
+         <div className="dashboard">
+             <aside className="sidebar">
+@@ -361,6 +442,8 @@ function Dashboard() {
+                             Admin Panel
+                         </button>
+                     )}
++                    <button className={`nav-item ${activeTab === "security" ? "active" : ""}`}
++                        onClick={() => setActiveTab("security")}>Security</button>
+                 </nav>
+             </aside>
+ 
+@@ -371,7 +454,8 @@ function Dashboard() {
+                         <h1>
+                             {activeTab === "my" ? "My Files"
+                                 : activeTab === "shared" ? "Shared with me"
+-                                    : activeTab === "admin" ? "Admin Panel" : "Activity"}
++                                    : activeTab === "admin" ? "Admin Panel"
++                                        : activeTab === "security" ? "Security" : "Activity"}
+                         </h1>
+                         <p>Welcome, {user?.username}</p>
+                     </div>
+@@ -381,6 +465,24 @@ function Dashboard() {
+                     </button>
+                 </header>
+ 
++                {activeTab === "my" && (
++                    <section className="folders-panel">
++                        <label htmlFor="current-folder">Folder</label>
++                        <select id="current-folder" value={currentFolder}
++                            onChange={(event) => setCurrentFolder(event.target.value)}>
++                            <option value="">My Files (root)</option>
++                            {folders.map((folder) => <option key={folder.id} value={folder.id}>
++                                {folder.parent_id ? "↳ " : ""}{folder.name}
++                            </option>)}
++                        </select>
++                        <button onClick={createFolder}>New folder</button>
++                        {currentFolder && <>
++                            <button onClick={renameFolder}>Rename folder</button>
++                            <button onClick={deleteFolder}>Delete empty folder</button>
++                        </>}
++                    </section>
++                )}
++
+                 {activeTab === "my" && (
+                     <section className="file-controls">
+                         <input
+@@ -397,7 +499,7 @@ function Dashboard() {
+                         <button onClick={() => {
+                             setSearch("");
+                             setError("");
+-                            fetch("http://localhost:3000/files", {
++                            fetch(API + "/files", {
+                                 headers: {
+                                     Authorization: `Bearer ${localStorage.getItem("token")}`
+                                 }
+@@ -428,14 +530,14 @@ function Dashboard() {
+ 
+                     {loading ? (
+                         <p className="status-message">Loading files...</p>
+-                    ) : files.length === 0 ? (
++                    ) : displayedFiles.length === 0 ? (
+                         <p className="status-message">
+                             {activeTab === "shared"
+                                 ? "No files have been shared with you yet."
+                                 : "No files uploaded yet."}
+                         </p>
+                     ) : (
+-                        files.map((file) => (
++                        displayedFiles.map((file) => (
+                             <FileCard
+                                 readOnly={activeTab === "shared"}
+                                 key={file.id}
+@@ -445,6 +547,8 @@ function Dashboard() {
+                                 onRename={handleRename}
+                                 onShare={handleShare}
+                                 onManageAccess={handleManageAccess}
++                                folders={folders}
++                                onMove={moveFile}
+                             />
+                         ))
+                     )}
+@@ -474,6 +578,9 @@ function Dashboard() {
+                 {(activeTab === "activity" || activeTab === "admin") && (
+                     <ReviewTabs tab={activeTab} />
+                 )}
++                {activeTab === "security" && (
++                    <SecurityPanel enabled={mfaEnabled} onSessionEnded={handleLogout} />
++                )}
+ 
+ 
+ 
+diff --git a/frontend/src/pages/Login.jsx b/frontend/src/pages/Login.jsx
+index 49362e1..19add4b 100644
+--- a/frontend/src/pages/Login.jsx
++++ b/frontend/src/pages/Login.jsx
+@@ -1,3 +1,4 @@
++import { API } from "../config";
+ import { useState } from "react";
+ import { useNavigate, Link } from "react-router-dom"
+ 
+@@ -5,41 +6,40 @@ import { useNavigate, Link } from "react-router-dom"
+ function Login() {
+     const [email, setEmail] = useState("");
+     const [password, setPassword] = useState("");
++    const [challenge, setChallenge] = useState("");
++    const [code, setCode] = useState("");
+     const navigate = useNavigate();
+ 
+     const [error, setError] = useState("");
+ 
+     const handleLogin = async () => {
+-        const response = await fetch(
+-            "http://localhost:3000/auth/login",
+-            {
+-                method: "POST",
+-                headers: {
+-                    "Content-type": "application/json"
+-                },
+-                body: JSON.stringify({
+-                    email,
+-                    password
+-                })
++        setError("");
++        try {
++            const response = await fetch(
++                challenge ? API + "/auth/login/mfa" : API + "/auth/login",
++                {
++                    method: "POST",
++                    headers: { "Content-Type": "application/json" },
++                    body: JSON.stringify(challenge ? { challenge, code } : { email, password })
++                }
++            );
++            const data = await response.json();
++            if (!response.ok) {
++                setError(data.message || "Sign in failed.");
++                return;
+             }
+-        );
+-
+-        const data = await response.json();
+-
+-        if (!response.ok) {
+-            setError(data.message);
+-            return;
++            if (data.mfa_required) {
++                setChallenge(data.challenge);
++                setPassword("");
++                return;
++            }
++            localStorage.setItem("token", data.token);
++            localStorage.setItem("user", JSON.stringify(data.user));
++            navigate("/dashboard");
++        } catch {
++            setError("Could not connect to the server.");
+         }
+-
+-        localStorage.setItem("token", data.token);
+-
+-        localStorage.setItem(
+-            "user",
+-            JSON.stringify(data.user)
+-        );
+-        navigate("/dashboard");
+-
+-    }
++    };
+     return (
+         <div className="auth-page">
+             <section className="auth-panel">
+@@ -49,11 +49,11 @@ function Login() {
+ 
+                     <div className="auth-header">
+                         <h1>SecureDocs</h1>
+-                        <p>Sign in to your account</p>
++                        <p>{challenge ? "Enter your authenticator code" : "Sign in to your account"}</p>
+                     </div>
+ 
+                     <div className="auth-form">
+-                        <label>Email</label>
++                        {!challenge && <><label>Email</label>
+                         <input
+                             type="email"
+                             value={email}
+@@ -64,12 +64,20 @@ function Login() {
+                             type="password"
+                             value={password}
+                             onChange={(e) => setPassword(e.target.value)}
+-                        />
++                        /></>}
++                        {challenge && <>
++                            <label htmlFor="mfa-code">Six-digit code</label>
++                            <input id="mfa-code" inputMode="numeric" autoComplete="one-time-code"
++                                maxLength={6} value={code} onChange={(e) => setCode(e.target.value)} />
++                        </>}
+                         {error && <p className="error-message">{error}</p>}
+ 
+                         <button onClick={handleLogin}>
+-                            Login
++                            {challenge ? "Verify and sign in" : "Login"}
+                         </button>
++                        {challenge && <button type="button" onClick={() => {
++                            setChallenge(""); setCode(""); setError("");
++                        }}>Start over</button>}
+                     </div>
+ 
+                     <p className="auth-switch">
+@@ -97,4 +105,4 @@ function Login() {
+     )
+ }
+ 
+-export default Login;
+\ No newline at end of file
++export default Login;
+diff --git a/frontend/src/pages/Register.jsx b/frontend/src/pages/Register.jsx
+index 7902720..2352a4f 100644
+--- a/frontend/src/pages/Register.jsx
++++ b/frontend/src/pages/Register.jsx
+@@ -1,3 +1,4 @@
++import { API } from "../config";
+ import { useState } from "react";
+ import { useNavigate, Link } from "react-router-dom";
+ import "../styles/auth.css";
+@@ -14,7 +15,7 @@ function Register() {
+         setError("");
+ 
+         const response = await fetch(
+-            "http://localhost:3000/auth/register",
++            API + "/auth/register",
+             {
+                 method: "POST",
+                 headers: {
+diff --git a/frontend/src/styles/dashboard.css b/frontend/src/styles/dashboard.css
+index a4dc703..515170f 100644
+--- a/frontend/src/styles/dashboard.css
++++ b/frontend/src/styles/dashboard.css
+@@ -131,6 +131,46 @@ body {
+     margin: 16px 0;
+ }
+ 
++.folders-panel {
++    display: flex;
++    align-items: center;
++    flex-wrap: wrap;
++    gap: 10px;
++    margin: 20px 0 0;
++}
++
++.folders-panel select, .move-file-label select, .security-panel input {
++    padding: 8px 10px;
++    border: 1px solid #d1d5db;
++    border-radius: 6px;
++    background: white;
++}
++
++.folders-panel button, .security-panel button {
++    padding: 8px 12px;
++    border: 1px solid #d1d5db;
++    border-radius: 6px;
++    background: white;
++    cursor: pointer;
++}
++
++.security-panel form {
++    display: flex;
++    flex-direction: column;
++    align-items: flex-start;
++    gap: 10px;
++    margin: 20px 0;
++}
++
++.mfa-qr {
++    display: block;
++    width: 200px;
++    max-width: 100%;
++    margin: 16px 0;
++}
++
++.security-panel code { overflow-wrap: anywhere; }
++
+ .review-panel, .access-panel {
+     margin-top: 24px;
+     padding: 20px;
+diff --git a/frontend/src/styles/fileCard.css b/frontend/src/styles/fileCard.css
+index 0a153ca..1258cc0 100644
+--- a/frontend/src/styles/fileCard.css
++++ b/frontend/src/styles/fileCard.css
+@@ -25,4 +25,15 @@
+     border-radius: 6px;
+     background: white;
+     cursor: pointer;
+-}
+\ No newline at end of file
++}
++
++.move-file-label {
++    display: inline-flex;
++    align-items: center;
++    gap: 6px;
++    font-size: 13px;
++}
++
++.move-file-label select {
++    max-width: 145px;
++}

@@ -1,3 +1,4 @@
+import { API } from "../config";
 import { useState } from "react";
 import { useNavigate, Link } from "react-router-dom"
 
@@ -5,41 +6,40 @@ import { useNavigate, Link } from "react-router-dom"
 function Login() {
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
+    const [challenge, setChallenge] = useState("");
+    const [code, setCode] = useState("");
     const navigate = useNavigate();
 
     const [error, setError] = useState("");
 
     const handleLogin = async () => {
-        const response = await fetch(
-            "http://localhost:3000/auth/login",
-            {
-                method: "POST",
-                headers: {
-                    "Content-type": "application/json"
-                },
-                body: JSON.stringify({
-                    email,
-                    password
-                })
+        setError("");
+        try {
+            const response = await fetch(
+                challenge ? API + "/auth/login/mfa" : API + "/auth/login",
+                {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(challenge ? { challenge, code } : { email, password })
+                }
+            );
+            const data = await response.json();
+            if (!response.ok) {
+                setError(data.message || "Sign in failed.");
+                return;
             }
-        );
-
-        const data = await response.json();
-
-        if (!response.ok) {
-            setError(data.message);
-            return;
+            if (data.mfa_required) {
+                setChallenge(data.challenge);
+                setPassword("");
+                return;
+            }
+            localStorage.setItem("token", data.token);
+            localStorage.setItem("user", JSON.stringify(data.user));
+            navigate("/dashboard");
+        } catch {
+            setError("Could not connect to the server.");
         }
-
-        localStorage.setItem("token", data.token);
-
-        localStorage.setItem(
-            "user",
-            JSON.stringify(data.user)
-        );
-        navigate("/dashboard");
-
-    }
+    };
     return (
         <div className="auth-page">
             <section className="auth-panel">
@@ -49,11 +49,11 @@ function Login() {
 
                     <div className="auth-header">
                         <h1>SecureDocs</h1>
-                        <p>Sign in to your account</p>
+                        <p>{challenge ? "Enter your authenticator code" : "Sign in to your account"}</p>
                     </div>
 
                     <div className="auth-form">
-                        <label>Email</label>
+                        {!challenge && <><label>Email</label>
                         <input
                             type="email"
                             value={email}
@@ -64,12 +64,20 @@ function Login() {
                             type="password"
                             value={password}
                             onChange={(e) => setPassword(e.target.value)}
-                        />
+                        /></>}
+                        {challenge && <>
+                            <label htmlFor="mfa-code">Six-digit code</label>
+                            <input id="mfa-code" inputMode="numeric" autoComplete="one-time-code"
+                                maxLength={6} value={code} onChange={(e) => setCode(e.target.value)} />
+                        </>}
                         {error && <p className="error-message">{error}</p>}
 
                         <button onClick={handleLogin}>
-                            Login
+                            {challenge ? "Verify and sign in" : "Login"}
                         </button>
+                        {challenge && <button type="button" onClick={() => {
+                            setChallenge(""); setCode(""); setError("");
+                        }}>Start over</button>}
                     </div>
 
                     <p className="auth-switch">

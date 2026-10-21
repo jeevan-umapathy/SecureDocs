@@ -3,7 +3,7 @@ const express = require("express");
 const cors = require("cors");
 const app = express();
 app.use(express.json());
-app.use(cors());
+app.use(cors({ origin: process.env.FRONTEND_ORIGIN || "http://localhost:5173" }));
 
 const pool = require("./config/database");
 
@@ -18,6 +18,7 @@ app.use("/", indexRoutes);
 app.use("/users", userRoutes);
 app.use("/auth", authRoutes);
 app.use("/files", fileRoutes);
+app.use("/folders", require("./routes/folderRoutes"));
 app.use("/activity", require("./routes/activityRoutes"));
 app.use("/admin", require("./routes/adminRoutes"));
 
@@ -38,8 +39,8 @@ app.use((err, req, res, next) => {
         });
     }
 
-    if (err.status === 400) {
-        return res.status(400).json({
+    if (err.status >= 400 && err.status < 500) {
+        return res.status(err.status).json({
             message: err.message
         });
     }
@@ -57,8 +58,11 @@ app.use((err, req, res, next) => {
 const PORT = process.env.PORT || 3000;
 async function startServer() {
     try {
+        if (!process.env.JWT_SECRET) throw new Error("Set JWT_SECRET in backend/.env");
         await pool.query("SELECT role, is_active FROM users LIMIT 1");
         await pool.query("SELECT id FROM audit_logs LIMIT 1");
+        await pool.query("SELECT mfa_enabled, mfa_secret_enc, token_version FROM users LIMIT 1");
+        await pool.query("SELECT id FROM folders LIMIT 1");
         console.log("Postgre connected");
         app.listen(PORT, () => {
             console.log(`Server running on ${PORT}`);

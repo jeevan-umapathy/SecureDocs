@@ -5,8 +5,11 @@ const pool = require('../config/database');
 (async () => {
     const client = await pool.connect();
     try {
-        await client.query(await fs.readFile(path.join(__dirname, '../migrations/001_activity_admin.sql'), 'utf8'));
-        console.log('Activity/admin migration applied. Existing rows preserved.');
+        for (const filename of ['001_activity_admin.sql', '002_mfa_folders.sql']) {
+            await client.query(await fs.readFile(path.join(__dirname, '..', 'migrations', filename), 'utf8'));
+            console.log('Applied', filename);
+        }
+        console.log('Migrations complete. Existing rows preserved.');
     } catch (error) {
         await client.query('ROLLBACK');
         console.error('Migration failed and rolled back:', error.message);

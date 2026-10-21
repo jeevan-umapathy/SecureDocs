@@ -49,6 +49,12 @@ router.patch(
     fileController.renameFile
 );
 
+router.patch(
+    "/:id/folder",
+    authMiddleware,
+    fileController.moveFile
+);
+
 router.delete(
     "/:id",
     authMiddleware,

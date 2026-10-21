@@ -26,3 +26,14 @@
     background: white;
     cursor: pointer;
 }
+
+.move-file-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+}
+
+.move-file-label select {
+    max-width: 145px;
+}
