@@ -18,6 +18,8 @@ app.use("/", indexRoutes);
 app.use("/users", userRoutes);
 app.use("/auth", authRoutes);
 app.use("/files", fileRoutes);
+app.use("/activity", require("./routes/activityRoutes"));
+app.use("/admin", require("./routes/adminRoutes"));
 
 app.use((err, req, res, next) => {
     if (res.headersSent) {

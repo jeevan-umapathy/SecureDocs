@@ -1,6 +1,7 @@
 import { useNavigate } from "react-router-dom";
 import { useState, useEffect } from "react";
 import FileCard from "../components/FileCard";
+import ReviewTabs from "../components/ReviewTabs";
 import "../styles/dashboard.css";
 import "../styles/fileCard.css";
 
@@ -15,12 +16,34 @@ function Dashboard() {
     const [activeTab, setActiveTab] = useState("my");
     const navigate = useNavigate();
 
+
     const user = JSON.parse(
         localStorage.getItem("user")
     );
 
+
+    const [role, setRole] = useState("user");
+
+    useEffect(() => {
+        fetch("http://localhost:3000/users/profile", {
+            headers: {
+                Authorization: `Bearer ${localStorage.getItem("token")}`
+            }
+        })
+            .then(response => {
+                if (!response.ok) throw new Error("Profile unavailable");
+                return response.json();
+            })
+            .then(data => setRole(data.user.role))
+            .catch(console.error);
+    }, []);
+
     useEffect(() => {
         const fetchFiles = async () => {
+            if (activeTab === "activity" || activeTab === "admin") {
+                setLoading(false);
+                return;
+            }
             setLoading(true);
             setError("");
             const token = localStorage.getItem("token");
@@ -282,7 +305,21 @@ function Dashboard() {
                         Shared with me
                     </button>
 
-                    <button className="nav-item">Activity</button>
+                    <button
+                        className={`nav-item ${activeTab === "activity" ? "active" : ""}`}
+                        onClick={() => setActiveTab("activity")}
+                    >
+                        Activity
+                    </button>
+
+                    {role === "admin" && (
+                        <button
+                            className={`nav-item ${activeTab === "admin" ? "active" : ""}`}
+                            onClick={() => setActiveTab("admin")}
+                        >
+                            Admin Panel
+                        </button>
+                    )}
                 </nav>
             </aside>
 
