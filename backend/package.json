@@ -4,9 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "node tests/disposable.js",
-    "migrate": "node scripts/migrate.js",
-    "promote": "node scripts/promote.js",
+    "test": "echo \"Error: no test specified\" && exit 1",
     "start": "node server.js",
     "dev": "nodemon server.js"
   },

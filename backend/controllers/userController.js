@@ -13,7 +13,7 @@ async function getUsers(req, res) {
 }
 
 async function profile(req, res) {
-    return res.status(200).json({
+    return res.status(201).json({
         message: "Profile fetched successfully",
         user: req.user
     });
