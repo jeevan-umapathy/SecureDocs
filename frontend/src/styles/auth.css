@@ -93,15 +93,6 @@
     cursor: pointer;
 }
 
-.auth-visual {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 64px;
-    background: #111827;
-    color: white;
-}
-
 .visual-content {
     max-width: 420px;
 }

@@ -1,8 +1,10 @@
 .file-card {
     background: white;
-    border: 1px solid #e5e7eb;
-    border-radius: 8px;
-    padding: 18px;
+    border: 1px solid #e2e8f2;
+    border-radius: 14px;
+    padding: 20px;
+    min-width: 0;
+    box-shadow: 0 6px 24px #243c6010;
 }
 
 .file-card h3 {
@@ -15,6 +17,7 @@
 
 .file-actions {
     display: flex;
+    flex-wrap: wrap;
     gap: 8px;
     margin-top: 14px;
 }
