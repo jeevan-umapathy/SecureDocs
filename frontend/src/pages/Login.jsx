@@ -54,17 +54,17 @@ function Login() {
 
                     <div className="auth-form">
                         {!challenge && <><label>Email</label>
-                        <input
-                            type="email"
-                            value={email}
-                            onChange={(e) => setEmail(e.target.value)}
-                        />
-                        <label>Password</label>
-                        <input
-                            type="password"
-                            value={password}
-                            onChange={(e) => setPassword(e.target.value)}
-                        /></>}
+                            <input
+                                type="email"
+                                value={email}
+                                onChange={(e) => setEmail(e.target.value)}
+                            />
+                            <label>Password</label>
+                            <input
+                                type="password"
+                                value={password}
+                                onChange={(e) => setPassword(e.target.value)}
+                            /></>}
                         {challenge && <>
                             <label htmlFor="mfa-code">Six-digit code</label>
                             <input id="mfa-code" inputMode="numeric" autoComplete="one-time-code"
@@ -89,18 +89,53 @@ function Login() {
                 </div>
             </section>
 
+
             <section className="auth-visual">
-                <div className="visual-content">
-                    <div className="visual-icon">
-                        ⇄
+                <div className="auth-art" aria-hidden="true">
+                    <div className="art-grid" />
+
+                    <div className="art-document art-document-back">
+                        <div className="art-file-icon">≡</div>
+                        <div className="art-line art-line-long" />
+                        <div className="art-line art-line-short" />
+                        <div className="art-line art-line-medium" />
                     </div>
 
-                    <h2>Share files with confidence.</h2>
+                    <div className="art-transfer-path">
+                        <span className="art-transfer-dot" />
+                    </div>
+
+                    <div className="art-document art-document-front">
+                        <div className="art-doc-top">
+                            <span className="art-file-icon">≡</span>
+                            <span className="art-verified">✓</span>
+                        </div>
+
+                        <div className="art-line art-line-long" />
+                        <div className="art-line art-line-medium" />
+                        <div className="art-line art-line-short" />
+
+                        <div className="art-doc-footer">
+                            <span className="art-avatar">S</span>
+                            <span>Shared securely</span>
+                        </div>
+                    </div>
+
+                    <div className="art-security-label">
+                        <span className="art-security-dot" />
+                        END-TO-END CONTROL
+                    </div>
+                </div>
+
+                <div className="visual-content">
+                    <h2>Files, shared securely.</h2>
                     <p>
-                        Secure storage, controlled access, and simple sharing.
+                        A simple place to keep your files
+                        and share them with others.
                     </p>
                 </div>
             </section>
+
         </div>
     )
 }

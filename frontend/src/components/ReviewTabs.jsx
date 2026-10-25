@@ -145,7 +145,11 @@ export default function ReviewTabs({ tab }) {
                     <tbody>
                         {activity.map(event => (
                             <tr key={event.id}>
-                                <td>{event.action}</td>
+                                <td>
+                                    {event.action === "file_received"
+                                        ? "Received"
+                                        : event.action}
+                                </td>
                                 {tab === "admin" && <td>{event.actor_name || "Deleted user"}</td>}
                                 <td>
                                     {event.details?.filename ||

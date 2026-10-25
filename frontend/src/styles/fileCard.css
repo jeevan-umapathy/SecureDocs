@@ -37,3 +37,128 @@
 .move-file-label select {
     max-width: 145px;
 }
+
+
+/* SECUREDOCS — FILE CARDS */
+
+.file-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fit,
+            minmax(min(100%, 360px), 1fr));
+    gap: 16px;
+}
+
+.file-card {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    min-width: 0;
+    padding: 22px;
+    background: #fff;
+    border: 1px solid #e7eaf0;
+    border-radius: 13px;
+    box-shadow: 0 3px 16px rgba(21, 34, 55, 0.025);
+    transition:
+        border-color 180ms ease,
+        box-shadow 180ms ease,
+        transform 180ms ease;
+}
+
+.file-card:hover {
+    border-color: #c8c5ee;
+    box-shadow: 0 12px 30px rgba(32, 42, 87, 0.075);
+    transform: translateY(-2px);
+}
+
+.file-info h3 {
+    margin: 0 0 11px;
+    overflow-wrap: anywhere;
+    color: #202a3b;
+    font-size: 15px;
+    font-weight: 650;
+    letter-spacing: -0.25px;
+}
+
+.file-info p,
+.file-meta p {
+    color: #8993a3;
+    font-size: 12px;
+    line-height: 1.6;
+}
+
+.file-meta {
+    margin-top: 20px;
+}
+
+.file-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 14px;
+}
+
+.file-actions button {
+    padding: 8px 11px;
+    border: 1px solid #e0e4ed;
+    border-radius: 7px;
+    background: #fff;
+    color: #526077;
+    font-size: 12px;
+    font-weight: 550;
+}
+
+.file-actions button:hover {
+    color: #554bc9;
+    background: #f4f2ff;
+    border-color: #d5d0ff;
+}
+
+.file-actions button:first-child {
+    color: #fff;
+    background: #635bdb;
+    border-color: #635bdb;
+}
+
+.file-actions button:first-child:hover {
+    background: #5149c8;
+}
+
+.move-file-label {
+    margin-top: 4px;
+    color: #8993a3;
+}
+
+.move-file-label select {
+    max-width: 160px;
+    padding: 7px 8px;
+    background: #fafbff;
+}
+
+/* REFINED FILE ACTIONS */
+
+.file-card {
+    border-color: #e3e7ed;
+    box-shadow: 0 2px 8px rgba(17, 28, 45, 0.025);
+}
+
+.file-card:hover {
+    transform: translateY(-1px);
+    border-color: #c6d1de;
+    box-shadow: 0 8px 24px rgba(17, 28, 45, 0.065);
+}
+
+.file-actions button:first-child {
+    background: #25364e;
+    border-color: #25364e;
+    color: #fff;
+}
+
+.file-actions button:first-child:hover {
+    background: #354b68;
+}
+
+.file-actions button:hover:not(:first-child) {
+    color: #25364e;
+    background: #f0f3f7;
+    border-color: #cbd4df;
+}

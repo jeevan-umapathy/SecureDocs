@@ -14,6 +14,8 @@ const indexRoutes = require("./routes/indexRoutes");
 const userRoutes = require("./routes/userRoutes");
 const authRoutes = require("./routes/authRoutes");
 const fileRoutes = require("./routes/fileRoutes");
+const notificationRoutes = require("./routes/notificationRoutes");
+
 app.use("/", indexRoutes);
 app.use("/users", userRoutes);
 app.use("/auth", authRoutes);
@@ -21,8 +23,14 @@ app.use("/files", fileRoutes);
 app.use("/folders", require("./routes/folderRoutes"));
 app.use("/activity", require("./routes/activityRoutes"));
 app.use("/admin", require("./routes/adminRoutes"));
+app.use("/api/notifications", notificationRoutes);
 
 app.use((err, req, res, next) => {
+    console.error("SECUREDOCS ERROR:", {
+        message: err.message,
+        code: err.code,
+        detail: err.detail
+    });
     if (res.headersSent) {
         return next(err);
     }

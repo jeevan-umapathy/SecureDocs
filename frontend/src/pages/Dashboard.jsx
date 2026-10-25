@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from "react";
 import FileCard from "../components/FileCard";
 import ReviewTabs from "../components/ReviewTabs";
 import SecurityPanel from "../components/SecurityPanel";
+import NotificationCenter from "../components/NotificationCenter";
 import "../styles/dashboard.css";
 import "../styles/fileCard.css";
 
@@ -22,6 +23,16 @@ function Dashboard() {
     const [folders, setFolders] = useState([]);
     const [currentFolder, setCurrentFolder] = useState("");
     const [mfaEnabled, setMfaEnabled] = useState(false);
+    const [dialog, setDialog] = useState(null);
+    const [dialogBusy, setDialogBusy] = useState(false);
+    const [toast, setToast] = useState("");
+    const [page, setPage] = useState(1);
+    const PAGE_SIZE = 8;
+
+    useEffect(() => {
+        setSearch("");
+        setPage(1);
+    }, [activeTab, currentFolder]);
     const navigate = useNavigate();
 
 
@@ -193,89 +204,23 @@ function Dashboard() {
 
     };
 
-    const handleRename = async (file) => {
-        const newName = prompt("Enter new file name:", file.original_name);
-
-        if (!newName || newName === file.original_name) {
-            return;
-        }
-
-        const token = localStorage.getItem("token");
-
-        const response = await fetch(
-            `${API}/files/${file.id}`,
-            {
-                method: "PATCH",
-                headers: {
-                    "Content-Type": "application/json",
-                    Authorization: `Bearer ${token}`
-                },
-                body: JSON.stringify({
-                    original_name: newName
-                })
-            }
-        );
-
-        const data = await response.json();
-
-        if (!response.ok) {
-            setError(data.message || "Rename failed.");
-            return;
-        }
-
-        setFiles((currentFiles) =>
-            currentFiles.map((item) =>
-                item.id === file.id ? data.file : item
-            )
-        );
-    };
-
-    const handleShare = async (file) => {
-        const enteredEmail = window.prompt(
-            `Share "${file.original_name}" with which email?`
-        );
-
-        if (enteredEmail === null) return;
-
-        const email = enteredEmail.trim();
-
-        if (!email) {
-            setError("Please enter the recipient's email.");
-            return;
-        }
-
+    const handleRename = (file) => {
         setError("");
 
-        try {
-            const token = localStorage.getItem("token");
-
-            const response = await fetch(
-                `${API}/files/${file.id}/share`,
-                {
-                    method: "POST",
-                    headers: {
-                        "Content-Type": "application/json",
-                        Authorization: `Bearer ${token}`
-                    },
-                    body: JSON.stringify({ email })
-                }
-
-            );
-
-            const data = await response.json();
-
-            if (!response.ok) {
-                setError(data.message || "Sharing failed.");
-                return;
-            }
-
-            window.alert(`File shared with ${email}`);
-
-        } catch {
-            setError("Could not complete sharing!");
-        }
+        setDialog({
+            type: "rename-file",
+            file,
+            value: file.original_name
+        });
     };
 
+    const handleShare = (file) => {
+        setDialog({
+            type: "share",
+            file,
+            value: ""
+        });
+    };
     const handleManageAccess = async (file) => {
         setError("");
         try {
@@ -360,27 +305,128 @@ function Dashboard() {
         setFolders(data.folders);
     };
 
-    const createFolder = async () => {
-        const name = window.prompt("New folder name:");
-        if (!name) return;
-        try {
-            await folderRequest("/folders", "POST", {
-                name, parent_id: currentFolder || null
-            });
-            await refreshFolders();
-            setError("");
-        } catch (err) { setError(err.message); }
+    const createFolder = () => {
+        setDialog({
+            type: "folder",
+            value: ""
+        });
     };
 
-    const renameFolder = async () => {
-        const folder = folders.find((item) => String(item.id) === currentFolder);
-        const name = window.prompt("Rename folder:", folder?.name);
-        if (!name) return;
+    const submitDialog = async (event) => {
+        event.preventDefault();
+
+        if (!dialog || dialogBusy) return;
+
+        const value = dialog.value.trim();
+
+        if (!value) {
+            setError("Please fill in the required field.");
+            return;
+        }
+
+        setDialogBusy(true);
+        setError("");
+
         try {
-            await folderRequest(`/folders/${currentFolder}`, "PATCH", { name });
-            await refreshFolders();
-            setError("");
-        } catch (err) { setError(err.message); }
+            if (dialog.type === "share") {
+                const response = await fetch(
+                    `${API}/files/${dialog.file.id}/share`,
+                    {
+                        method: "POST",
+                        headers: {
+                            "Content-Type": "application/json",
+                            Authorization: `Bearer ${localStorage.getItem("token")}`
+                        },
+                        body: JSON.stringify({ email: value })
+                    }
+                );
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.message || "Sharing failed.");
+                }
+
+                setToast(`Shared with ${value}`);
+            }
+
+            if (dialog.type === "folder") {
+                await folderRequest("/folders", "POST", {
+                    name: value,
+                    parent_id: currentFolder || null
+                });
+
+                await refreshFolders();
+
+                setToast("Folder created");
+            }
+
+            if (dialog.type === "rename-file") {
+                const response = await fetch(
+                    `${API}/files/${dialog.file.id}`,
+                    {
+                        method: "PATCH",
+                        headers: {
+                            "Content-Type": "application/json",
+                            Authorization: `Bearer ${localStorage.getItem("token")}`
+                        },
+                        body: JSON.stringify({
+                            original_name: value
+                        })
+                    }
+                );
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.message || "Could not rename file.");
+                }
+
+                setFiles((current) =>
+                    current.map((file) =>
+                        file.id === dialog.file.id
+                            ? { ...file, ...data.file }
+                            : file
+                    )
+                );
+
+                setToast("File renamed");
+            }
+
+            if (dialog.type === "rename-folder") {
+                await folderRequest(
+                    `/folders/${dialog.folder.id}`,
+                    "PATCH",
+                    { name: value }
+                );
+
+                await refreshFolders();
+
+                setToast("Folder renamed");
+            }
+
+            setDialog(null);
+        } catch (err) {
+            setError(err.message || "Something went wrong.");
+        } finally {
+            setDialogBusy(false);
+        }
+    };
+
+    const renameFolder = () => {
+        const folder = folders.find(
+            (item) => String(item.id) === String(currentFolder)
+        );
+
+        if (!folder) return;
+
+        setError("");
+
+        setDialog({
+            type: "rename-folder",
+            folder,
+            value: folder.name
+        });
     };
 
     const deleteFolder = async () => {
@@ -403,9 +449,28 @@ function Dashboard() {
         } catch (err) { setError(err.message); }
     };
 
-    const displayedFiles = activeTab === "my"
-        ? files.filter((file) => String(file.folder_id || "") === currentFolder)
-        : files;
+    const filteredFiles = files
+        .filter((file) =>
+            activeTab !== "my" ||
+            String(file.folder_id || "") === currentFolder
+        )
+        .filter((file) =>
+            file.original_name
+                .toLowerCase()
+                .includes(search.trim().toLowerCase())
+        );
+
+    const totalPages = Math.max(
+        1,
+        Math.ceil(filteredFiles.length / PAGE_SIZE)
+    );
+
+    const currentPage = Math.min(page, totalPages);
+
+    const displayedFiles = filteredFiles.slice(
+        (currentPage - 1) * PAGE_SIZE,
+        currentPage * PAGE_SIZE
+    );
 
     return (
         <div className="dashboard">
@@ -434,6 +499,13 @@ function Dashboard() {
                         Activity
                     </button>
 
+                    <button
+                        className={`nav-item ${activeTab === "notifications" ? "active" : ""}`}
+                        onClick={() => setActiveTab("notifications")}
+                    >
+                        Notifications
+                    </button>
+
                     {role === "admin" && (
                         <button
                             className={`nav-item ${activeTab === "admin" ? "active" : ""}`}
@@ -453,9 +525,12 @@ function Dashboard() {
                     <div>
                         <h1>
                             {activeTab === "my" ? "My Files"
-                                : activeTab === "shared" ? "Shared with me"
-                                    : activeTab === "admin" ? "Admin Panel"
-                                        : activeTab === "security" ? "Security" : "Activity"}
+                                : activeTab === "notifications" ? "Notifications"
+                                    : activeTab === "shared" ? "Shared with me"
+                                        : activeTab === "admin" ? "Admin Panel"
+                                            : activeTab === "security" ? "Security" : "Activity"
+
+                            }
                         </h1>
                         <p>Welcome, {user?.username}</p>
                     </div>
@@ -483,77 +558,114 @@ function Dashboard() {
                     </section>
                 )}
 
-                {activeTab === "my" && (
+                {(activeTab === "my" || activeTab === "shared") && (
                     <section className="file-controls">
                         <input
-                            type="text"
-                            placeholder="Search files..."
+                            type="search"
+                            placeholder={
+                                activeTab === "shared"
+                                    ? "Search files shared with you..."
+                                    : "Search your files..."
+                            }
                             value={search}
-                            onChange={(e) => setSearch(e.target.value)}
+                            onChange={(e) => {
+                                setSearch(e.target.value);
+                                setPage(1);
+                            }}
+                            aria-label="Search files"
                         />
 
-                        <button onClick={handleSearch}>
-                            Search
-                        </button>
+                        {search && (
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setSearch("");
+                                    setPage(1);
+                                }}
+                            >
+                                Clear
+                            </button>
+                        )}
 
-                        <button onClick={() => {
-                            setSearch("");
-                            setError("");
-                            fetch(API + "/files", {
-                                headers: {
-                                    Authorization: `Bearer ${localStorage.getItem("token")}`
-                                }
-                            })
-                                .then((response) => response.json())
-                                .then((data) => setFiles(data.files || []))
-                                .catch(() => setError("Could not reload files."));
-                        }}>
-                            Clear
-                        </button>
+                        {activeTab === "my" && (
+                            <>
+                                <input
+                                    type="file"
+                                    ref={fileInput}
+                                    onChange={(e) => setSelectedFile(e.target.files[0])}
+                                />
 
-                        <input
-                            type="file"
-                            ref={fileInput}
-                            onChange={(e) => setSelectedFile(e.target.files[0])}
-                        />
-
-                        <button onClick={handleUpload}>
-                            Upload
-                        </button>
+                                <button onClick={handleUpload}>
+                                    Upload
+                                </button>
+                            </>
+                        )}
                     </section>
                 )}
 
                 {error && <p className="error-message">{error}</p>}
 
                 {(activeTab === "my" || activeTab === "shared") && (
-                <section className="file-list">
+                    <>
+                        <section className="file-list">
 
-                    {loading ? (
-                        <p className="status-message">Loading files...</p>
-                    ) : displayedFiles.length === 0 ? (
-                        <p className="status-message">
-                            {activeTab === "shared"
-                                ? "No files have been shared with you yet."
-                                : "No files uploaded yet."}
-                        </p>
-                    ) : (
-                        displayedFiles.map((file) => (
-                            <FileCard
-                                readOnly={activeTab === "shared"}
-                                key={file.id}
-                                file={file}
-                                onDownload={handleDownload}
-                                onDelete={handleDelete}
-                                onRename={handleRename}
-                                onShare={handleShare}
-                                onManageAccess={handleManageAccess}
-                                folders={folders}
-                                onMove={moveFile}
-                            />
-                        ))
-                    )}
+                            {loading ? (
+                                <p className="status-message">Loading files...</p>
+                            ) : displayedFiles.length === 0 ? (
+                                <p className="status-message">
+                                    {activeTab === "shared"
+                                        ? "No files have been shared with you yet."
+                                        : "No files uploaded yet."}
+                                </p>
+                            ) : (
+                                displayedFiles.map((file) => (
+                                    <FileCard
+                                        readOnly={activeTab === "shared"}
+                                        key={file.id}
+                                        file={file}
+                                        onDownload={handleDownload}
+                                        onDelete={handleDelete}
+                                        onRename={handleRename}
+                                        onShare={handleShare}
+                                        onManageAccess={handleManageAccess}
+                                        folders={folders}
+                                        onMove={moveFile}
+                                    />
+                                ))
+                            )}
 
-                </section>
+                        </section>
+
+                        {!loading && filteredFiles.length > 0 && (
+                            <div className="pagination">
+                                <span>
+                                    Showing {(currentPage - 1) * PAGE_SIZE + 1}–
+                                    {Math.min(currentPage * PAGE_SIZE, filteredFiles.length)}
+                                    {" "}of {filteredFiles.length} files
+                                </span>
+
+                                <div className="pagination-actions">
+                                    <button
+                                        disabled={currentPage === 1}
+                                        onClick={() => setPage(currentPage - 1)}
+                                    >
+                                        Previous
+                                    </button>
+
+                                    <span>
+                                        Page {currentPage} of {totalPages}
+                                    </span>
+
+                                    <button
+                                        disabled={currentPage === totalPages}
+                                        onClick={() => setPage(currentPage + 1)}
+                                    >
+                                        Next
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+                    </>
                 )}
 
                 {accessFile && activeTab === "my" && (
@@ -581,6 +693,143 @@ function Dashboard() {
                 {activeTab === "security" && (
                     <SecurityPanel enabled={mfaEnabled} onSessionEnded={handleLogout} />
                 )}
+                {activeTab === "notifications" && (
+                    <NotificationCenter />
+                )}
+
+
+                {dialog && (
+                    <div
+                        className="sd-dialog-backdrop"
+                        onMouseDown={(event) => {
+                            if (event.target === event.currentTarget && !dialogBusy) {
+                                setDialog(null);
+                                setError("");
+                            }
+                        }}
+                    >
+                        <div
+                            className="sd-dialog"
+                            role="dialog"
+                            aria-modal="true"
+                            aria-labelledby="sd-dialog-title"
+                        >
+                            <div className="sd-dialog-heading">
+                                <div>
+                                    <h2 id="sd-dialog-title">
+                                        {{
+                                            share: "Share file",
+                                            folder: "New folder",
+                                            "rename-file": "Rename file",
+                                            "rename-folder": "Rename folder"
+                                        }[dialog.type]}
+                                    </h2>
+
+                                    <p>
+                                        {dialog.type === "share"
+                                            ? dialog.file.original_name
+                                            : dialog.type === "folder"
+                                                ? "Create a folder to organise your files."
+                                                : "Enter a new name below."}
+                                    </p>
+                                </div>
+
+                                <button
+                                    className="sd-dialog-close"
+                                    type="button"
+                                    onClick={() => {
+                                        setDialog(null);
+                                        setError("");
+                                    }}
+                                    disabled={dialogBusy}
+                                    aria-label="Close dialog"
+                                >
+                                    ×
+                                </button>
+                            </div>
+
+                            <form onSubmit={submitDialog}>
+                                <label htmlFor="sd-dialog-input">
+                                    {dialog.type === "share"
+                                        ? "Recipient email"
+                                        : dialog.type === "rename-file"
+                                            ? "File name"
+                                            : "Folder name"}
+                                </label>
+
+                                <input
+                                    id="sd-dialog-input"
+                                    autoFocus
+                                    required
+                                    type={dialog.type === "share" ? "email" : "text"}
+                                    placeholder={
+                                        dialog.type === "share"
+                                            ? "name@example.com"
+                                            : dialog.type === "rename-file"
+                                                ? "Document.pdf"
+                                                : "Folder name"
+                                    }
+                                    value={dialog.value}
+                                    onChange={(event) =>
+                                        setDialog((current) => ({
+                                            ...current,
+                                            value: event.target.value
+                                        }))
+                                    }
+                                />
+
+                                {error && (
+                                    <p className="sd-dialog-error" role="alert">
+                                        {error}
+                                    </p>
+                                )}
+
+                                <div className="sd-dialog-actions">
+                                    <button
+                                        type="button"
+                                        className="sd-button-secondary"
+                                        onClick={() => {
+                                            setDialog(null);
+                                            setError("");
+                                        }}
+                                        disabled={dialogBusy}
+                                    >
+                                        Cancel
+                                    </button>
+
+                                    <button
+                                        type="submit"
+                                        className="sd-button-primary"
+                                        disabled={dialogBusy}
+                                    >
+                                        {dialogBusy
+                                            ? "Please wait..."
+                                            : dialog.type === "share"
+                                                ? "Share file"
+                                                : dialog.type === "folder"
+                                                    ? "Create folder"
+                                                    : "Save changes"}
+                                    </button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                )}
+
+                {toast && (
+                    <div className="sd-toast" role="status">
+                        <span className="sd-toast-icon">✓</span>
+                        <span>{toast}</span>
+                        <button
+                            type="button"
+                            onClick={() => setToast("")}
+                            aria-label="Dismiss notification"
+                        >
+                            ×
+                        </button>
+                    </div>
+                )}
+
 
 
 

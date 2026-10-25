@@ -9,15 +9,20 @@ async function record(actorId, action, fileId = null, details = {}, client = poo
 }
 
 
+
 async function listForUser(userId) {
     const result = await pool.query(
         `SELECT id, action, file_id, details, created_at
-         FROM audit_logs WHERE actor_id = $1
-         ORDER BY created_at DESC, id DESC LIMIT 100`,
+     FROM user_activity_feed
+     WHERE user_id = $1
+     ORDER BY created_at DESC
+     LIMIT 100`,
         [userId]
     );
+
     return result.rows;
 }
+
 
 async function listForAdmin() {
     const result = await pool.query(
