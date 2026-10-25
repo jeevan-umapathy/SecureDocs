@@ -1074,3 +1074,65 @@ select:focus-visible {
         animation: none;
     }
 }
+
+/* UPLOAD PROGRESS */
+
+.sd-upload-status {
+    padding: 16px 19px;
+    margin: -8px 0 24px;
+    background: #fff;
+    border: 1px solid #e2e7ed;
+    border-radius: 10px;
+}
+
+.sd-upload-label {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 12px;
+    color: #526174;
+    font-size: 12px;
+}
+
+.sd-upload-label strong {
+    color: #25364e;
+    font-variant-numeric: tabular-nums;
+}
+
+.sd-upload-track {
+    height: 5px;
+    overflow: hidden;
+    border-radius: 999px;
+    background: #e8edf2;
+}
+
+.sd-upload-fill {
+    height: 100%;
+    border-radius: inherit;
+    background: #477f73;
+    transition: width 140ms ease-out;
+}
+
+.file-controls button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.file-controls select {
+    min-height: 41px;
+    padding: 10px 32px 10px 12px;
+    border: 1px solid #dce2ea;
+    border-radius: 8px;
+    background: #fff;
+    color: #475569;
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.file-controls select:hover {
+    border-color: #b9c5d3;
+}
+
+.file-controls select:focus-visible {
+    outline: 3px solid rgba(76, 100, 130, 0.12);
+    border-color: #71849c;
+}

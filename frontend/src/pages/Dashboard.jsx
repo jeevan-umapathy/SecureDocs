@@ -27,11 +27,18 @@ function Dashboard() {
     const [dialogBusy, setDialogBusy] = useState(false);
     const [toast, setToast] = useState("");
     const [page, setPage] = useState(1);
+    const [uploading, setUploading] = useState(false);
+    const [uploadProgress, setUploadProgress] = useState(null);
+    const [uploadStage, setUploadStage] = useState("");
+    const [fileType, setFileType] = useState("all");
+    const [sortBy, setSortBy] = useState("recent");
     const PAGE_SIZE = 8;
 
     useEffect(() => {
         setSearch("");
         setPage(1);
+        setFileType("all");
+        setSortBy("recent");
     }, [activeTab, currentFolder]);
     const navigate = useNavigate();
 
@@ -135,42 +142,111 @@ function Dashboard() {
 
         setFiles(data.files);
     }
-    const handleUpload = async () => {
-        if (!selectedFile) {
+
+    const handleUpload = () => {
+        if (!selectedFile || uploading) return;
+
+        const MAX_SIZE = 5 * 1024 * 1024;
+
+        if (selectedFile.size > MAX_SIZE) {
+            setError("File exceeds the current 5 MB upload limit.");
             return;
         }
 
-        const token = localStorage.getItem("token");
+        const allowed = [".pdf", ".jpg", ".jpeg", ".png", ".ppt", ".pptx"];
+
+        const extension = selectedFile.name
+            .slice(selectedFile.name.lastIndexOf("."))
+            .toLowerCase();
+
+        if (!allowed.includes(extension)) {
+            setError("Supported formats: PDF, JPG, PNG, PPT and PPTX.");
+            return;
+        }
 
         const formData = new FormData();
         formData.append("file", selectedFile);
-        if (currentFolder) formData.append("folder_id", currentFolder);
 
-        const response = await fetch(
-            API + "/files/upload",
-            {
-                method: "POST",
-                headers: {
-                    Authorization: `Bearer ${token}`
-                },
-                body: formData
-            }
-        );
-
-        const data = await response.json();
-
-        if (!response.ok) {
-            setError(data.message || "Upload failed.");
-            return;
+        if (currentFolder) {
+            formData.append("folder_id", currentFolder);
         }
 
-        setFiles((currentFiles) => [
-            data.file,
-            ...currentFiles
-        ]);
+        const xhr = new XMLHttpRequest();
 
-        setSelectedFile(null);
-        fileInput.current.value = "";
+        setUploading(true);
+        setUploadProgress(0);
+        setUploadStage("Uploading file...");
+        setError("");
+
+        xhr.open("POST", `${API}/files/upload`);
+
+        xhr.setRequestHeader(
+            "Authorization",
+            `Bearer ${localStorage.getItem("token")}`
+        );
+
+        xhr.timeout = 65000;
+
+        xhr.upload.onprogress = (event) => {
+            if (event.lengthComputable) {
+                const percentage = Math.round(
+                    (event.loaded / event.total) * 100
+                );
+
+                setUploadProgress(percentage);
+
+                if (percentage === 100) {
+                    setUploadStage("Saving to cloud...");
+                }
+            }
+        };
+
+        xhr.onload = () => {
+            let data = {};
+
+            try {
+                data = JSON.parse(xhr.responseText);
+            } catch {
+                data = {};
+            }
+
+            if (xhr.status >= 200 && xhr.status < 300) {
+                setFiles((current) => [data.file, ...current]);
+
+                setSelectedFile(null);
+
+                if (fileInput.current) {
+                    fileInput.current.value = "";
+                }
+
+                setToast("File uploaded successfully");
+            } else {
+                setError(
+                    data.message ||
+                    `Upload failed (${xhr.status}).`
+                );
+            }
+
+            setUploading(false);
+            setUploadProgress(null);
+            setUploadStage("");
+        };
+
+        xhr.onerror = () => {
+            setError("Network error. Check your connection and try again.");
+            setUploading(false);
+            setUploadProgress(null);
+            setUploadStage("");
+        };
+
+        xhr.ontimeout = () => {
+            setError("Upload timed out. Please try again.");
+            setUploading(false);
+            setUploadProgress(null);
+            setUploadStage("");
+        };
+
+        xhr.send(formData);
     };
 
     const handleDownload = async (fileId, fileName) => {
@@ -458,7 +534,46 @@ function Dashboard() {
             file.original_name
                 .toLowerCase()
                 .includes(search.trim().toLowerCase())
-        );
+        )
+        .filter((file) => {
+            if (fileType === "all") return true;
+
+            if (fileType === "pdf") {
+                return file.mime_type === "application/pdf";
+            }
+
+            if (fileType === "image") {
+                return file.mime_type?.startsWith("image/");
+            }
+
+            if (fileType === "presentation") {
+                return (
+                    file.mime_type?.includes("presentation") ||
+                    file.mime_type === "application/vnd.ms-powerpoint"
+                );
+            }
+
+            return true;
+        })
+        .sort((a, b) => {
+            if (sortBy === "name") {
+                return a.original_name.localeCompare(b.original_name);
+            }
+
+            if (sortBy === "size") {
+                return b.file_size - a.file_size;
+            }
+
+            const dateA = new Date(
+                a.shared_at || a.uploaded_at || 0
+            ).getTime();
+
+            const dateB = new Date(
+                b.shared_at || b.uploaded_at || 0
+            ).getTime();
+
+            return dateB - dateA;
+        });
 
     const totalPages = Math.max(
         1,
@@ -559,48 +674,102 @@ function Dashboard() {
                 )}
 
                 {(activeTab === "my" || activeTab === "shared") && (
-                    <section className="file-controls">
-                        <input
-                            type="search"
-                            placeholder={
-                                activeTab === "shared"
-                                    ? "Search files shared with you..."
-                                    : "Search your files..."
-                            }
-                            value={search}
-                            onChange={(e) => {
-                                setSearch(e.target.value);
-                                setPage(1);
-                            }}
-                            aria-label="Search files"
-                        />
-
-                        {search && (
-                            <button
-                                type="button"
-                                onClick={() => {
-                                    setSearch("");
+                    <>
+                        <section className="file-controls">
+                            <input
+                                type="search"
+                                placeholder={
+                                    activeTab === "shared"
+                                        ? "Search files shared with you..."
+                                        : "Search your files..."
+                                }
+                                value={search}
+                                onChange={(e) => {
+                                    setSearch(e.target.value);
                                     setPage(1);
                                 }}
+                                aria-label="Search files"
+                            />
+
+                            <select
+                                value={fileType}
+                                onChange={(event) => {
+                                    setFileType(event.target.value);
+                                    setPage(1);
+                                }}
+                                aria-label="Filter by file type"
                             >
-                                Clear
-                            </button>
-                        )}
+                                <option value="all">All files</option>
+                                <option value="pdf">PDF</option>
+                                <option value="image">Images</option>
+                                <option value="presentation">Presentations</option>
+                            </select>
 
-                        {activeTab === "my" && (
-                            <>
-                                <input
-                                    type="file"
-                                    ref={fileInput}
-                                    onChange={(e) => setSelectedFile(e.target.files[0])}
-                                />
+                            <select
+                                value={sortBy}
+                                onChange={(event) => {
+                                    setSortBy(event.target.value);
+                                    setPage(1);
+                                }}
+                                aria-label="Sort files"
+                            >
+                                <option value="recent">Newest first</option>
+                                <option value="name">Name A–Z</option>
+                                <option value="size">Largest first</option>
+                            </select>
 
-                                <button onClick={handleUpload}>
-                                    Upload
+                            {search && (
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setSearch("");
+                                        setPage(1);
+                                    }}
+                                >
+                                    Clear
                                 </button>
-                            </>
+                            )}
+
+                            {activeTab === "my" && (
+                                <>
+                                    <input
+                                        type="file"
+                                        ref={fileInput}
+                                        onChange={(e) => setSelectedFile(e.target.files[0])}
+                                    />
+
+                                    <button
+                                        onClick={handleUpload}
+                                        disabled={!selectedFile || uploading}
+                                    >
+                                        {uploading ? "Uploading..." : "Upload"}
+                                    </button>
+                                </>
+                            )}
+                        </section>
+
+                        {activeTab === "my" && uploading && (
+                            <div className="sd-upload-status" role="status">
+                                <div className="sd-upload-label">
+                                    <span>{uploadStage}</span>
+                                    <strong>{uploadProgress ?? 0}%</strong>
+                                </div>
+
+                                <div
+                                    className="sd-upload-track"
+                                    role="progressbar"
+                                    aria-valuemin={0}
+                                    aria-valuemax={100}
+                                    aria-valuenow={uploadProgress ?? 0}
+                                >
+                                    <div
+                                        className="sd-upload-fill"
+                                        style={{ width: `${uploadProgress ?? 0}%` }}
+                                    />
+                                </div>
+                            </div>
                         )}
-                    </section>
+                    </>
                 )}
 
                 {error && <p className="error-message">{error}</p>}

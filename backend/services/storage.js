@@ -41,7 +41,19 @@ async function save(file) {
         body: await fs.readFile(file.path),
         signal: AbortSignal.timeout(30000)
     });
-    if (!response.ok) throw new Error(`Cloud upload failed (${response.status}).`);
+    if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+
+        console.error("Supabase upload:", {
+            status: response.status,
+            code: body.error || body.statusCode,
+            message: body.message
+        });
+
+        throw new Error(
+            `Cloud upload failed (${response.status}).`
+        );
+    }
     await fs.unlink(file.path);
     return location;
 }

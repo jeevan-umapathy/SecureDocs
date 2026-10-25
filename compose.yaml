@@ -7,6 +7,7 @@ services:
       POSTGRES_DB: securedocs
     volumes:
       - pgdata:/var/lib/postgresql/data
+      - ./backend/migrations/000_baseline.sql:/docker-entrypoint-initdb.d/000_baseline.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U securedocs -d securedocs"]
       interval: 5s
@@ -25,6 +26,7 @@ services:
       DB_USER: securedocs
       DB_PASSWORD: ${DB_PASSWORD}
       DB_NAME: securedocs
+      DATABASE_URL: postgresql://securedocs:${DB_PASSWORD}@db:5432/securedocs?schema=public
       JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
       JWT_EXPIRES_IN: 1h
       MFA_ENCRYPTION_KEY: ${MFA_ENCRYPTION_KEY:?Set MFA_ENCRYPTION_KEY in .env}

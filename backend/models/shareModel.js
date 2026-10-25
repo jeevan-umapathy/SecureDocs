@@ -1,4 +1,5 @@
 const pool = require("../config/database");
+const prisma = require("../config/prisma");
 
 async function createShare(fileId, recipientId, client = pool) {
     const result = await client.query(
@@ -41,24 +42,34 @@ async function revokeShare(fileId, shareId, ownerId, client = pool) {
 }
 
 async function getSharedFiles(userId) {
-    const result = await pool.query(
-        `
-        SELECT
-            f.id,
-            f.original_name,
-            f.mime_type,
-            f.file_size,
-            s.shared_at,
-            u.username AS owner_name
-        FROM shares AS s
-        JOIN files AS F ON f.id = s.file_id
-        JOIN users AS u ON u.id = f.owner_id
-        WHERE s.shared_with = $1
-        ORDER BY s.shared_at DESC;
-        `,
-        [userId]
-    );
-    return result.rows;
+    const records = await prisma.shares.findMany({
+        where: {
+            shared_with: Number(userId)
+        },
+        include: {
+            files: {
+                include: {
+                    users: {
+                        select: {
+                            username: true
+                        }
+                    }
+                }
+            }
+        },
+        orderBy: {
+            shared_at: "desc"
+        }
+    });
+
+    return records.map((share) => ({
+        id: share.files.id,
+        original_name: share.files.original_name,
+        mime_type: share.files.mime_type,
+        file_size: share.files.file_size,
+        shared_at: share.shared_at,
+        owner_name: share.files.users.username
+    }));
 }
 
 module.exports = {

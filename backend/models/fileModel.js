@@ -1,5 +1,5 @@
 const pool = require("../config/database");
-
+const prisma = require("../config/prisma");
 
 async function createFile(
     ownerId,
@@ -51,14 +51,14 @@ async function moveFile(fileId, ownerId, folderId, client = pool) {
 }
 
 async function getFilesByOwner(ownerId) {
-    const result = await pool.query(
-        `
-        SELECT * FROM files
-        WHERE owner_id = $1;
-        `,
-        [ownerId]
-    );
-    return result.rows;
+    return prisma.files.findMany({
+        where: {
+            owner_id: Number(ownerId)
+        },
+        orderBy: {
+            uploaded_at: "desc"
+        }
+    });
 }
 
 async function getFileById(fileId, ownerId) {
@@ -101,41 +101,38 @@ async function updateFileName(fileId, ownerId, newName, client = pool) {
 }
 
 async function searchFiles(ownerId, searchTerm) {
-    const result = await pool.query(
-        `
-        SELECT *
-        FROM FILES
-        WHERE owner_id = $1
-        AND original_name ILIKE $2
-        ORDER BY uploaded_at DESC;
-        `,
-        [
-            ownerId,
-            `%${searchTerm}%`
-        ]
-    );
-    return result.rows;
+    return prisma.files.findMany({
+        where: {
+            owner_id: Number(ownerId),
+            original_name: {
+                contains: searchTerm,
+                mode: "insensitive"
+            }
+        },
+        orderBy: {
+            uploaded_at: "desc"
+        }
+    });
 }
 
 async function getDownloadableFile(fileId, userId) {
-    const result = await pool.query(
-        `
-        SELECT f.*
-        FROM files AS f
-        WHERE f.id = $1
-            AND (
-                f.owner_id = $2
-                OR EXISTS (
-                    SELECT 1
-                    FROM shares AS s
-                    WHERE s.file_id = f.id
-                        AND s.shared_with = $2
-                )
-            );
-        `,
-        [fileId, userId]
-    );
-    return result.rows[0];
+    return prisma.files.findFirst({
+        where: {
+            id: Number(fileId),
+            OR: [
+                {
+                    owner_id: Number(userId)
+                },
+                {
+                    shares: {
+                        some: {
+                            shared_with: Number(userId)
+                        }
+                    }
+                }
+            ]
+        }
+    });
 }
 module.exports = {
     createFile,
