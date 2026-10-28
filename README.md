@@ -92,3 +92,14 @@ import your existing Windows PostgreSQL data or local uploads. Stop with
 
 Public hosting needs a provider, HTTPS, production secrets, backups, and an
 allowlisted `FRONTEND_ORIGIN`; it is not provisioned by this repository.
+
+## Render database updates
+
+The backend Dockerfile runs `npm run migrate && npm start` before serving
+requests. If the Render backend is a native Node service instead of a Docker
+service, set its start command to `npm run migrate && npm start` with the root
+directory set to `backend`. From the repository root, use
+`npm run migrate --prefix backend && npm start --prefix backend`. The migration runner applies
+`003_fix_file_received_notification.sql` after the existing additive migrations.
+Check the Render deploy logs for `Applied 003_fix_file_received_notification.sql`
+and a successful startup before testing sharing on the live site.

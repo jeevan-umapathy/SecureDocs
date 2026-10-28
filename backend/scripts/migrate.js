@@ -5,7 +5,7 @@ const pool = require('../config/database');
 (async () => {
     const client = await pool.connect();
     try {
-        for (const filename of ['001_activity_admin.sql', '002_mfa_folders.sql']) {
+        for (const filename of ['001_activity_admin.sql', '002_mfa_folders.sql', '003_fix_file_received_notification.sql']) {
             await client.query(await fs.readFile(path.join(__dirname, '..', 'migrations', filename), 'utf8'));
             console.log('Applied', filename);
         }

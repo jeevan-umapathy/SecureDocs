@@ -1,46 +1,3 @@
-.file-card {
-    background: white;
-    border: 1px solid #e5e7eb;
-    border-radius: 8px;
-    padding: 18px;
-}
-
-.file-card h3 {
-    margin: 0 0 10px;
-}
-
-.file-card p {
-    margin: 6px 0;
-}
-
-.file-actions {
-    display: flex;
-    gap: 8px;
-    margin-top: 14px;
-}
-
-.file-actions button {
-    padding: 7px 12px;
-    border: 1px solid rgb(226, 225, 213);
-    border-radius: 6px;
-    background: white;
-    cursor: pointer;
-}
-
-.move-file-label {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 13px;
-}
-
-.move-file-label select {
-    max-width: 145px;
-}
-
-
-/* SECUREDOCS — FILE CARDS */
-
 .file-list {
     display: grid;
     grid-template-columns: repeat(auto-fit,
@@ -55,9 +12,9 @@
     min-width: 0;
     padding: 22px;
     background: #fff;
-    border: 1px solid #e7eaf0;
+    border: 1px solid #e3e7ed;
     border-radius: 13px;
-    box-shadow: 0 3px 16px rgba(21, 34, 55, 0.025);
+    box-shadow: 0 2px 8px rgba(17, 28, 45, 0.025);
     transition:
         border-color 180ms ease,
         box-shadow 180ms ease,
@@ -65,9 +22,9 @@
 }
 
 .file-card:hover {
-    border-color: #c8c5ee;
-    box-shadow: 0 12px 30px rgba(32, 42, 87, 0.075);
-    transform: translateY(-2px);
+    transform: translateY(-1px);
+    border-color: #c6d1de;
+    box-shadow: 0 8px 24px rgba(17, 28, 45, 0.065);
 }
 
 .file-info h3 {
@@ -77,6 +34,10 @@
     font-size: 15px;
     font-weight: 650;
     letter-spacing: -0.25px;
+}
+
+.file-card p {
+    margin: 6px 0;
 }
 
 .file-info p,
@@ -105,60 +66,36 @@
     color: #526077;
     font-size: 12px;
     font-weight: 550;
-}
-
-.file-actions button:hover {
-    color: #554bc9;
-    background: #f4f2ff;
-    border-color: #d5d0ff;
-}
-
-.file-actions button:first-child {
-    color: #fff;
-    background: #635bdb;
-    border-color: #635bdb;
-}
-
-.file-actions button:first-child:hover {
-    background: #5149c8;
-}
-
-.move-file-label {
-    margin-top: 4px;
-    color: #8993a3;
-}
-
-.move-file-label select {
-    max-width: 160px;
-    padding: 7px 8px;
-    background: #fafbff;
-}
-
-/* REFINED FILE ACTIONS */
-
-.file-card {
-    border-color: #e3e7ed;
-    box-shadow: 0 2px 8px rgba(17, 28, 45, 0.025);
-}
-
-.file-card:hover {
-    transform: translateY(-1px);
-    border-color: #c6d1de;
-    box-shadow: 0 8px 24px rgba(17, 28, 45, 0.065);
-}
-
-.file-actions button:first-child {
-    background: #25364e;
-    border-color: #25364e;
-    color: #fff;
-}
-
-.file-actions button:first-child:hover {
-    background: #354b68;
+    cursor: pointer;
 }
 
 .file-actions button:hover:not(:first-child) {
     color: #25364e;
     background: #f0f3f7;
     border-color: #cbd4df;
+}
+
+.file-actions button:first-child {
+    color: #fff;
+    background: #25364e;
+    border-color: #25364e;
+}
+
+.file-actions button:first-child:hover {
+    background: #354b68;
+}
+
+.move-file-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 4px;
+    color: #8993a3;
+    font-size: 13px;
+}
+
+.move-file-label select {
+    max-width: 160px;
+    padding: 7px 8px;
+    background: #fafbff;
 }
