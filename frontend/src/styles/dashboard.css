@@ -924,3 +924,50 @@ select:focus-visible {
     background: #477f73;
     transition: width 140ms ease-out;
 }
+
+
+/* SUBTLE JADE POLISH */
+
+/* Active sidebar indicator */
+.nav-item.active::before {
+    background: #54ad94;
+}
+
+/* Active sidebar text */
+.nav-item.active {
+    color: #e2f6ed;
+}
+
+/* Search, input and select focus */
+.file-controls input:focus,
+.file-controls select:focus,
+.security-panel input:focus,
+.sd-dialog input:focus {
+    border-color: #70aa98;
+    outline-color: rgba(64, 150, 120, 0.12);
+    box-shadow: 0 0 0 3px rgba(64, 150, 120, 0.08);
+}
+
+/* Slight jade tint on file card hover */
+.file-card:hover {
+    border-color: #b5d5ca;
+}
+
+/* Subtle hover on secondary buttons */
+.file-controls button:hover,
+.folders-panel button:hover,
+.file-actions button:hover:not(:first-child) {
+    border-color: #b9d7ce;
+}
+
+/* Keyboard accessibility */
+button:focus-visible,
+input:focus-visible,
+select:focus-visible {
+    outline-color: rgba(64, 150, 120, 0.28);
+}
+
+/* Keep primary buttons navy */
+.sd-button-primary:hover {
+    background: #2c4655;
+}

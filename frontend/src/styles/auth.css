@@ -406,3 +406,24 @@
         transition: none;
     }
 }
+
+
+/* SUBTLE JADE AUTH ACCENTS */
+
+.auth-form input:focus {
+    border-color: #70aa98;
+    box-shadow: 0 0 0 3px rgba(64, 150, 120, 0.10);
+}
+
+.auth-switch a:hover {
+    color: #287761;
+}
+
+.art-verified {
+    background: #315d54;
+    color: #b8e8d5;
+}
+
+.art-security-dot {
+    background: #69b69c;
+}

@@ -52,7 +52,13 @@ function Login() {
                         <p>{challenge ? "Enter your authenticator code" : "Sign in to your account"}</p>
                     </div>
 
-                    <div className="auth-form">
+                    <form
+                        className="auth-form"
+                        onSubmit={(e) => {
+                            e.preventDefault();
+                            handleLogin();
+                        }}
+                    >
                         {!challenge && <><label>Email</label>
                             <input
                                 type="email"
@@ -72,13 +78,13 @@ function Login() {
                         </>}
                         {error && <p className="error-message">{error}</p>}
 
-                        <button onClick={handleLogin}>
+                        <button type="submit">
                             {challenge ? "Verify and sign in" : "Login"}
                         </button>
                         {challenge && <button type="button" onClick={() => {
                             setChallenge(""); setCode(""); setError("");
                         }}>Start over</button>}
-                    </div>
+                    </form>
 
                     <p className="auth-switch">
                         Don't have an account? {" "}
@@ -87,7 +93,7 @@ function Login() {
                         </Link>
                     </p>
                 </div>
-            </section>
+            </section >
 
 
             <section className="auth-visual">
@@ -136,7 +142,7 @@ function Login() {
                 </div>
             </section>
 
-        </div>
+        </div >
     )
 }
 

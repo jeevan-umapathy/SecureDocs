@@ -50,7 +50,13 @@ function Register() {
                         <p>Start using SecureDocs</p>
                     </div>
 
-                    <div className="auth-form">
+                    <form
+                        className="auth-form"
+                        onSubmit={(e) => {
+                            e.preventDefault();
+                            handleRegister();
+                        }}
+                    >
 
                         <label>Username</label>
                         <input
@@ -79,11 +85,11 @@ function Register() {
                             </p>
                         )}
 
-                        <button onClick={handleRegister}>
-                            Register
+                        <button type="submit">
+                            Create Account
                         </button>
 
-                    </div>
+                    </form>
 
                     <p className="auth-switch">
                         Already have an account?{" "}
@@ -93,7 +99,7 @@ function Register() {
                     </p>
 
                 </div>
-            </section>
+            </section >
 
 
             <section className="auth-visual">
@@ -143,7 +149,7 @@ function Register() {
             </section>
 
 
-        </div>
+        </div >
     );
 }
 
